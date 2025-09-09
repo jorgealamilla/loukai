@@ -1,0 +1,57 @@
+{
+  "name": "kai-player",
+  "version": "1.0.0",
+  "description": "KAI-Play Player/Coach App - Real-time karaoke player with stem control and coaching",
+  "main": "src/main/main.js",
+  "homepage": "./",
+  "scripts": {
+    "start": "electron . --no-sandbox",
+    "dev": "electron . --dev --no-sandbox",
+    "build": "electron-builder",
+    "build:linux": "electron-builder --linux",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "rebuild": "electron-rebuild",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "keywords": [
+    "karaoke",
+    "audio",
+    "electron",
+    "music",
+    "coaching",
+    "autotune"
+  ],
+  "author": "KAI-Player Team",
+  "license": "AGPL-3.0",
+  "devDependencies": {
+    "electron": "^25.0.0",
+    "electron-builder": "^24.0.0",
+    "electron-rebuild": "^3.2.9"
+  },
+  "dependencies": {
+    "ws": "^8.13.0",
+    "yauzl": "^3.0.0",
+    "yazl": "^3.3.1"
+  },
+  "build": {
+    "appId": "com.kaiplayer.app",
+    "productName": "KAI Player",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "node_modules/**/*"
+    ],
+    "linux": {
+      "target": "AppImage"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    }
+  }
+}
