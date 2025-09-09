@@ -145,7 +145,7 @@ class PlayerController {
             }
         }
         
-        if (this.currentPosition > this.songDuration && this.songDuration > 0) {
+        if (this.currentPosition >= this.songDuration - 0.1 && this.songDuration > 0) {
             this.currentPosition = this.songDuration;
             this.pause();
         }

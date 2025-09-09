@@ -34,6 +34,9 @@ class RendererAudioEngine {
         this.startTime = 0;
         this.pauseTime = 0;
         
+        // Event callbacks
+        this.onSongEndedCallback = null;
+        
         this.mixerState = {
             stems: [],
             scenes: { A: null, B: null },
@@ -381,6 +384,10 @@ class RendererAudioEngine {
                             if (this.isPlaying && this.currentPosition >= audioBuffer.duration) {
                                 console.log('Playback ended');
                                 this.pause();
+                                // Notify the main app that the song has ended
+                                if (this.onSongEndedCallback) {
+                                    this.onSongEndedCallback();
+                                }
                             }
                         };
                         
@@ -570,6 +577,10 @@ class RendererAudioEngine {
         this.outputNodes.IEM.gainNodes.clear();
         
         console.log('Renderer audio engine stopped');
+    }
+
+    setOnSongEndedCallback(callback) {
+        this.onSongEndedCallback = callback;
     }
 }
 

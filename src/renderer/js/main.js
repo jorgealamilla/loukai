@@ -29,6 +29,11 @@ class KaiPlayerApp {
         this.audioEngine = new RendererAudioEngine();
         await this.audioEngine.initialize();
         
+        // Set up callback for when songs end
+        this.audioEngine.setOnSongEndedCallback(() => {
+            this.handleSongEnded();
+        });
+        
         // Now that audio engine is ready, restore device selections
         await this.restoreDeviceSelections();
         
@@ -594,6 +599,24 @@ class KaiPlayerApp {
     updatePlayButton(text) {
         document.querySelector('#playPauseBtn .icon-play').textContent = text;
         document.getElementById('playPauseBtn2').textContent = text;
+    }
+
+    handleSongEnded() {
+        console.log('Song ended - updating UI state');
+        this.isPlaying = false;
+        this.updatePlayButton('▶');
+        
+        // Also update the player controller's state
+        if (this.player) {
+            this.player.isPlaying = false;
+            // Update karaoke renderer
+            if (this.player.karaokeRenderer) {
+                this.player.karaokeRenderer.setPlaying(false);
+            }
+        }
+        
+        // Update status
+        this.updateStatus('Song ended');
     }
 
     async seekRelative(seconds) {

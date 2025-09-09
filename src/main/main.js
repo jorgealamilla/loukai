@@ -266,9 +266,8 @@ class KaiPlayerApp {
 const kaiApp = new KaiPlayerApp();
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  // Quit the app when all windows are closed, even on macOS
+  app.quit();
 });
 
 app.on('activate', () => {
