@@ -100,6 +100,37 @@ class KaiPlayerApp {
             this.showSongInfo();
         });
 
+        document.getElementById('openCanvasWindowBtn').addEventListener('click', async () => {
+            try {
+                const result = await kaiAPI.window.openCanvas();
+                if (result && result.success) {
+                    console.log('Canvas window opened successfully');
+                } else {
+                    console.error('Failed to open canvas window:', result);
+                }
+            } catch (error) {
+                console.error('Error opening canvas window:', error);
+            }
+        });
+
+        // Karaoke canvas fullscreen functionality
+        const karaokeCanvas = document.getElementById('karaokeCanvas');
+        
+        // Click handler for canvas
+        karaokeCanvas.addEventListener('click', () => {
+            this.toggleCanvasFullscreen();
+        });
+        
+        // Fullscreen change events
+        document.addEventListener('fullscreenchange', () => {
+            const isCanvasFullscreen = !!document.fullscreenElement;
+            console.log('🖥️ Canvas fullscreen changed:', isCanvasFullscreen ? 'ENTERED' : 'EXITED');
+        });
+        
+        document.addEventListener('fullscreenerror', (error) => {
+            console.error('❌ Canvas fullscreen error:', error);
+        });
+
         document.getElementById('closeSongInfoBtn').addEventListener('click', () => {
             document.getElementById('songInfoModal').style.display = 'none';
         });
@@ -478,6 +509,19 @@ class KaiPlayerApp {
                     }
                     break;
                 
+                case 'f':
+                case 'F':
+                    e.preventDefault();
+                    this.toggleCanvasFullscreen();
+                    break;
+                
+                case 'Escape':
+                    if (document.fullscreenElement) {
+                        e.preventDefault();
+                        this.toggleCanvasFullscreen();
+                    }
+                    break;
+                
                 default:
                     if (e.key >= '1' && e.key <= '9') {
                         const stemIndex = parseInt(e.key) - 1;
@@ -490,6 +534,23 @@ class KaiPlayerApp {
                     break;
             }
         });
+    }
+    
+    async toggleCanvasFullscreen() {
+        try {
+            const karaokeCanvas = document.getElementById('karaokeCanvas');
+            if (!document.fullscreenElement) {
+                // Enter fullscreen
+                await karaokeCanvas.requestFullscreen();
+                console.log('✅ Karaoke canvas entered fullscreen');
+            } else {
+                // Exit fullscreen
+                await document.exitFullscreen();
+                console.log('✅ Karaoke canvas exited fullscreen');
+            }
+        } catch (error) {
+            console.error('❌ Canvas fullscreen toggle failed:', error);
+        }
     }
     
     setupWaveformControls() {

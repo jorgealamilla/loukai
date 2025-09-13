@@ -53,6 +53,19 @@ const api = {
   editor: {
     saveKai: (kaiData, originalPath) => ipcRenderer.invoke('editor:saveKai', kaiData, originalPath),
     reloadKai: (filePath) => ipcRenderer.invoke('editor:reloadKai', filePath)
+  },
+  
+  window: {
+    openCanvas: () => ipcRenderer.invoke('window:openCanvas')
+  },
+  
+  canvas: {
+    startStreaming: () => ipcRenderer.invoke('canvas:startStreaming'),
+    stopStreaming: () => ipcRenderer.invoke('canvas:stopStreaming'),
+    sendImageData: (imageDataArray, width, height) => ipcRenderer.invoke('canvas:sendImageData', imageDataArray, width, height),
+    sendICECandidate: (source, candidate) => ipcRenderer.invoke('canvas:sendICECandidate', source, candidate),
+    toggleFullscreen: (shouldBeFullscreen) => ipcRenderer.invoke('canvas:toggleFullscreen', shouldBeFullscreen),
+    sendFrame: (dataUrl) => ipcRenderer.invoke('canvas:sendFrame', dataUrl)
   }
 };
 

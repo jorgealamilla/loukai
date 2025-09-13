@@ -528,6 +528,27 @@ body {
     margin: 0 auto;
 }
 
+/* Fullscreen styles for karaoke canvas */
+#karaokeCanvas:fullscreen {
+    width: 100vw;
+    height: 100vh;
+    object-fit: contain;
+    background: #000;
+    border: none;
+    border-radius: 0;
+    cursor: pointer;
+}
+
+#karaokeCanvas:-webkit-full-screen {
+    width: 100vw;
+    height: 100vh;
+    object-fit: contain;
+    background: #000;
+    border: none;
+    border-radius: 0;
+    cursor: pointer;
+}
+
 .lyric-line {
     margin-bottom: 12px;
     padding: 8px;

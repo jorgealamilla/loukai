@@ -8,9 +8,18 @@ const KaiWriter = require('../utils/kaiWriter');
 class KaiPlayerApp {
   constructor() {
     this.mainWindow = null;
+    this.canvasWindow = null;
     this.audioEngine = null;
     this.currentSong = null;
     this.isDev = process.argv.includes('--dev');
+    this.canvasStreaming = {
+      isStreaming: false,
+      stream: null,
+      reader: null,
+      port: null,
+      inflight: 0,
+      MAX_INFLIGHT: 2
+    };
   }
 
   async initialize() {
@@ -48,10 +57,776 @@ class KaiPlayerApp {
 
     this.mainWindow.on('closed', () => {
       this.mainWindow = null;
+      if (this.canvasWindow) {
+        this.canvasWindow.close();
+      }
       if (this.audioEngine) {
         this.audioEngine.stop();
       }
     });
+  }
+
+  createCanvasWindow() {
+    if (this.canvasWindow) {
+      this.canvasWindow.focus();
+      return;
+    }
+
+    this.canvasWindow = new BrowserWindow({
+      width: 1280,
+      height: 720,
+      minWidth: 640,
+      minHeight: 360,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+      },
+      title: 'Canvas Window',
+      show: false
+    });
+
+    const canvasHtml = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas Window</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #frame {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            background: #111;
+            border: 1px solid #333;
+            cursor: pointer;
+        }
+        
+        /* Native browser fullscreen styles */
+        #frame:fullscreen {
+            width: 100vw;
+            height: 100vh;
+            object-fit: contain; /* Maintain aspect ratio */
+            background: #000;
+            border: none;
+            cursor: pointer;
+        }
+        
+        #frame:-webkit-full-screen {
+            width: 100vw;
+            height: 100vh;
+            object-fit: contain;
+            background: #000;
+            border: none;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay muted playsinline></video>
+    
+    <script>
+        const video = document.getElementById('video');
+        let isReceivingStream = false;
+        
+        function maintainAspectRatio() {
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+            const aspectRatio = 16 / 9;
+            
+            let newWidth, newHeight;
+            
+            if (windowWidth / windowHeight > aspectRatio) {
+                // Window is too wide
+                newHeight = windowHeight;
+                newWidth = windowHeight * aspectRatio;
+            } else {
+                // Window is too tall
+                newWidth = windowWidth;
+                newHeight = windowWidth / aspectRatio;
+            }
+            
+            video.style.width = newWidth + 'px';
+            video.style.height = newHeight + 'px';
+        }
+        
+        // Initial sizing
+        maintainAspectRatio();
+        
+        // Listen for window resize
+        window.addEventListener('resize', maintainAspectRatio);
+        
+        // Listen for load event to ensure proper sizing
+        window.addEventListener('load', maintainAspectRatio);
+        
+        // Set up IPC to communicate with main process
+        const { ipcRenderer } = require('electron');
+        
+        // Fullscreen functionality
+        let isFullscreen = false;
+        
+        const toggleFullscreen = async () => {
+            console.log('Toggling fullscreen, current state:', !!document.fullscreenElement);
+            
+            try {
+                if (!document.fullscreenElement) {
+                    // Enter fullscreen - use the browser's native Fullscreen API
+                    await video.requestFullscreen();
+                    isFullscreen = true;
+                    console.log('✅ Entered fullscreen mode');
+                } else {
+                    // Exit fullscreen
+                    await document.exitFullscreen();
+                    isFullscreen = false;
+                    console.log('✅ Exited fullscreen mode');
+                }
+            } catch (error) {
+                console.error('❌ Fullscreen toggle failed:', error);
+            }
+        };
+        
+        // Click handler for video
+        video.addEventListener('click', toggleFullscreen);
+        
+        // Keyboard handlers
+        document.addEventListener('keydown', (e) => {
+            // Allow copy/paste and other system shortcuts to work normally
+            if (e.ctrlKey || e.metaKey) {
+                console.log('Allowing system shortcut:', e.key);
+                return; // Don't prevent default for system shortcuts
+            }
+            
+            // Fullscreen toggle keys
+            if (e.key === 'f' || e.key === 'F') {
+                e.preventDefault();
+                toggleFullscreen();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                if (isFullscreen) {
+                    toggleFullscreen();
+                }
+            }
+        });
+        
+        // Make sure video doesn't capture focus inappropriately but allow clicks
+        video.style.outline = 'none';
+        video.tabIndex = -1; // Remove from tab order
+        video.style.cursor = 'pointer'; // Show it's clickable
+        
+        // Handle visibility changes
+        document.addEventListener('visibilitychange', () => {
+            console.log('👁️ Visibility changed:', document.hidden ? 'hidden' : 'visible');
+        });
+        
+        // Handle fullscreen changes
+        document.addEventListener('fullscreenchange', () => {
+            isFullscreen = !!document.fullscreenElement;
+            console.log('🖥️ Fullscreen changed:', isFullscreen ? 'ENTERED' : 'EXITED');
+            
+            // Log stream status to help debug freezing
+            if (video.srcObject) {
+                const stream = video.srcObject;
+                const tracks = stream.getVideoTracks();
+                console.log('📺 Stream tracks after fullscreen change:', tracks.length);
+                tracks.forEach((track, i) => {
+                    console.log('Track ' + i + ' enabled: ' + track.enabled + ' readyState: ' + track.readyState);
+                });
+            }
+        });
+        
+        document.addEventListener('fullscreenerror', (error) => {
+            console.error('❌ Fullscreen error:', error);
+        });
+        
+        // Handle window focus/blur
+        window.addEventListener('focus', () => {
+            console.log('🎯 Window focused');
+        });
+        
+        window.addEventListener('blur', () => {
+            console.log('😴 Window blurred');
+        });
+        
+        // Video event handlers to debug stream issues
+        video.addEventListener('loadedmetadata', () => {
+            console.log('🎬 Stream video metadata loaded:', video.videoWidth, 'x', video.videoHeight);
+            
+            // Check what the actual stream track settings are
+            if (video.srcObject) {
+                const stream = video.srcObject;
+                const tracks = stream.getVideoTracks();
+                if (tracks.length > 0) {
+                    const settings = tracks[0].getSettings();
+                    console.log('🔍 RECEIVED track settings:', settings.width, 'x', settings.height);
+                    
+                    if (settings.width !== 1920 || settings.height !== 1080) {
+                        console.error('❌ RECEIVED TRACK NOT 1080p! Got:', settings.width, 'x', settings.height);
+                    }
+                }
+            }
+            
+            maintainAspectRatio();
+            
+            if (!isReceivingStream) {
+                isReceivingStream = true;
+                console.log('📺 Started receiving WebRTC stream');
+            }
+        });
+        
+        video.addEventListener('playing', () => {
+            console.log('▶️ Video started playing');
+        });
+        
+        video.addEventListener('pause', () => {
+            console.log('⏸️ Video paused');
+        });
+        
+        video.addEventListener('ended', () => {
+            console.log('⏹️ Video ended');
+        });
+        
+        video.addEventListener('error', (e) => {
+            console.error('❌ Video error:', e, video.error);
+        });
+        
+        // Signal to main process that child window is ready for streaming
+        window.addEventListener('load', () => {
+            console.log('Child window fully loaded, signaling ready for streaming');
+            ipcRenderer.send('canvas:childReady');
+        });
+        
+        console.log('📺 Child window WebRTC receiver script loaded');
+    </script>
+</body>
+</html>
+    `;
+
+    this.canvasWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(canvasHtml)}`);
+
+    this.canvasWindow.once('ready-to-show', () => {
+      this.canvasWindow.show();
+      // Don't start streaming immediately - wait for child to signal ready
+    });
+
+    this.canvasWindow.on('closed', () => {
+      console.log('🔴 Child window closed, stopping streaming and cleanup');
+      this.stopCanvasStreaming();
+      
+      // Stop painting to capture canvas (but keep canvas and stream alive)
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.executeJavaScript(`
+          window.streamingToChild = false;
+          console.log('🔴 Stopped painting to capture canvas - child window closed');
+        `).catch(err => console.log('Window cleanup error:', err));
+      }
+      
+      this.canvasWindow = null;
+    });
+
+    if (this.isDev) {
+      this.canvasWindow.webContents.openDevTools();
+    }
+  }
+
+  async startCanvasStreaming() {
+    if (this.canvasStreaming.isStreaming || !this.canvasWindow || !this.mainWindow) {
+      return;
+    }
+    
+    // Only proceed if child window is still open and not destroyed
+    if (this.canvasWindow.isDestroyed()) {
+      console.log('❌ Child window destroyed, cannot start streaming');
+      return;
+    }
+
+    try {
+      console.log('Starting WebRTC canvas streaming...');
+      
+      // Set up WebRTC sender in main window
+      const senderResult = await this.mainWindow.webContents.executeJavaScript(`
+        (() => {
+          try {
+            console.log('🎬 Setting up WebRTC sender');
+            
+            const canvas = document.getElementById('karaokeCanvas');
+            if (!canvas) {
+              return { success: false, error: 'Canvas not found' };
+            }
+            
+            
+            // Get or create persistent offscreen canvas for streaming
+            let captureCanvas = window.streamCaptureCanvas;
+            if (!captureCanvas) {
+              captureCanvas = document.createElement('canvas');
+              captureCanvas.width = 1920;
+              captureCanvas.height = 1080;
+              captureCanvas.style.display = 'none';
+              document.body.appendChild(captureCanvas);
+              window.streamCaptureCanvas = captureCanvas;
+              // Create the MediaStream from this canvas (once)
+              window.captureStream = captureCanvas.captureStream(60);
+              
+              // Check if track is actually 1920x1080
+              const track = window.captureStream.getVideoTracks()[0];
+              const settings = track.getSettings();
+              console.log('🔍 Capture stream resolution:', settings.width, 'x', settings.height);
+              
+              if (settings.width !== 1920 || settings.height !== 1080) {
+                console.error('❌ CAPTURE STREAM NOT 1080p! Actual:', settings.width, 'x', settings.height);
+              }
+            }
+            
+            // Start painting to the offscreen canvas now that child window is open
+            const captureCtx = captureCanvas.getContext('2d');
+            
+            const copyFrame = () => {
+              if (window.streamingToChild) {
+                captureCtx.drawImage(canvas, 0, 0, 1920, 1080);
+                requestAnimationFrame(copyFrame);
+              }
+            };
+            window.streamingToChild = true;
+            copyFrame();
+            
+            // Return the existing stream
+            const stream = window.captureStream;
+            
+            if (stream.getVideoTracks().length === 0) {
+              return { success: false, error: 'No video track' };
+            }
+            
+            // Create RTCPeerConnection with optimized settings for local streaming
+            const pc = new RTCPeerConnection({
+              iceServers: [], // No ICE servers needed for local connection
+              iceCandidatePoolSize: 10,
+              bundlePolicy: 'balanced',
+              rtcpMuxPolicy: 'require',
+              // Disable adaptive bitrate to prevent downscaling
+              sdpSemantics: 'unified-plan'
+            });
+            
+            // Add stream tracks with transceivers for better control
+            stream.getTracks().forEach(track => {
+              console.log('➕ Adding track:', track.kind);
+              
+              if (track.kind === 'video') {
+                // Apply constraints to force 1920x1080
+                track.applyConstraints({
+                  width: { exact: 1920 },
+                  height: { exact: 1080 },
+                  frameRate: { exact: 60 }
+                }).then(() => {
+                  console.log('🎯 Applied 1920x1080 constraints to track');
+                }).catch(err => {
+                  console.error('❌ Failed to apply constraints:', err);
+                });
+              }
+              
+              const transceiver = pc.addTransceiver(track, {
+                direction: 'sendonly',
+                streams: [stream]
+              });
+              
+              // Configure for high quality, low compression
+              if (track.kind === 'video') {
+                const sender = transceiver.sender;
+                
+                // Set encoding parameters to maintain resolution
+                const setEncodingParams = async () => {
+                  try {
+                    const params = sender.getParameters();
+                    
+                    // Critical: Tell WebRTC to maintain resolution over frame rate
+                    params.degradationPreference = 'maintain-resolution';
+                    
+                    if (params.encodings && params.encodings.length > 0) {
+                      // Force no downscaling and high bitrate
+                      params.encodings[0].maxBitrate = 50000000; // 50 Mbps
+                      params.encodings[0].maxFramerate = 60;
+                      params.encodings[0].scaleResolutionDownBy = 1.0; // No downscaling
+                      params.encodings[0].minBitrate = 10000000; // Min 10 Mbps
+                    }
+                    
+                    await sender.setParameters(params);
+                    console.log('🎯 Set maintain-resolution + no downscaling');
+                  } catch (error) {
+                    console.error('❌ Failed to set encoding parameters:', error);
+                  }
+                };
+                
+                // Apply immediately
+                setEncodingParams();
+                
+                // Apply again after connection to ensure it sticks
+                setTimeout(setEncodingParams, 2000);
+                setTimeout(setEncodingParams, 5000);
+              }
+            });
+            
+            // Handle ICE candidates
+            pc.onicecandidate = (event) => {
+              if (event.candidate) {
+                console.log('🧊 Sender ICE candidate');
+                window.kaiAPI.canvas.sendICECandidate('sender', {
+                  candidate: event.candidate.candidate,
+                  sdpMid: event.candidate.sdpMid,
+                  sdpMLineIndex: event.candidate.sdpMLineIndex
+                });
+              }
+            };
+            
+            // Store references
+            window.senderPC = pc;
+            window.canvasStream = stream;
+            
+            console.log('✅ Sender setup complete');
+            return { success: true };
+          } catch (error) {
+            console.error('❌ Sender error:', error);
+            return { success: false, error: error.message };
+          }
+        })();
+      `);
+      
+      if (!senderResult.success) {
+        throw new Error('Sender setup failed: ' + senderResult.error);
+      }
+      
+      // Set up WebRTC receiver in child window
+      const receiverResult = await this.canvasWindow.webContents.executeJavaScript(`
+        (() => {
+          try {
+            console.log('🎬 Setting up WebRTC receiver');
+            
+            const video = document.getElementById('video');
+            
+            // Create RTCPeerConnection optimized for local 1080p streaming
+            const pc = new RTCPeerConnection({
+              iceServers: [], // No ICE servers needed for local connection
+              iceCandidatePoolSize: 10,
+              bundlePolicy: 'balanced',
+              rtcpMuxPolicy: 'require'
+            });
+            
+            // Handle ICE candidates
+            pc.onicecandidate = (event) => {
+              if (event.candidate) {
+                console.log('🧊 Receiver ICE candidate');
+                const { ipcRenderer } = require('electron');
+                ipcRenderer.invoke('canvas:sendICECandidate', 'receiver', {
+                  candidate: event.candidate.candidate,
+                  sdpMid: event.candidate.sdpMid,
+                  sdpMLineIndex: event.candidate.sdpMLineIndex
+                });
+              }
+            };
+            
+            // Handle incoming stream
+            pc.ontrack = (event) => {
+              console.log('🎥 Received stream');
+              video.srcObject = event.streams[0];
+              console.log('📺 Connected stream to video');
+            };
+            
+            // Store reference
+            window.receiverPC = pc;
+            
+            console.log('✅ Receiver setup complete');
+            return { success: true };
+          } catch (error) {
+            console.error('❌ Receiver error:', error);
+            return { success: false, error: error.message };
+          }
+        })();
+      `);
+      
+      if (!receiverResult.success) {
+        throw new Error('Receiver setup failed: ' + receiverResult.error);
+      }
+      
+      // Establish WebRTC connection
+      await this.establishWebRTCConnection();
+      
+      this.canvasStreaming.isStreaming = true;
+      console.log('✅ WebRTC canvas streaming started successfully');
+      
+    } catch (error) {
+      console.error('Canvas streaming setup error:', error);
+    }
+  }
+
+  async establishWebRTCConnection() {
+    console.log('🤝 Starting WebRTC handshake...');
+    
+    let offer;
+    try {
+      // Create offer in sender (main window)
+      console.log('📤 Creating offer in sender...');
+      
+      offer = await this.mainWindow.webContents.executeJavaScript(`
+        (async () => {
+          try {
+            console.log('📋 Creating offer...');
+            
+            // Force CPU-efficient codec for 1080p streaming
+            const transceivers = window.senderPC.getTransceivers();
+            transceivers.forEach(transceiver => {
+              if (transceiver.sender && transceiver.sender.track && transceiver.sender.track.kind === 'video') {
+                const capabilities = RTCRtpSender.getCapabilities('video');
+                console.log('📺 Available video codecs:', capabilities.codecs.map(c => c.mimeType));
+                
+                // Prioritize codecs for CPU efficiency and quality:
+                // 1. H.264 Baseline (hardware accelerated, low CPU)
+                // 2. VP8 (simple, good for local streaming)
+                // 3. AV1 (if hardware supported)
+                const preferredCodecs = capabilities.codecs.filter(codec => {
+                  // H.264 Baseline profile (most CPU efficient)
+                  if (codec.mimeType.includes('H264') && 
+                      codec.sdpFmtpLine?.includes('profile-level-id=42e01f')) {
+                    return true;
+                  }
+                  // VP8 (simple and efficient)
+                  if (codec.mimeType.includes('VP8')) {
+                    return true;
+                  }
+                  return false;
+                }).sort((a, b) => {
+                  // H.264 Baseline first, then VP8
+                  if (a.mimeType.includes('H264')) return -1;
+                  if (b.mimeType.includes('H264')) return 1;
+                  return 0;
+                });
+                
+                if (preferredCodecs.length > 0) {
+                  transceiver.setCodecPreferences(preferredCodecs);
+                  console.log('🎯 Set preferred codec for 1080p:', preferredCodecs[0].mimeType);
+                } else {
+                  console.warn('⚠️ No preferred codecs found, using default');
+                }
+              }
+            });
+            
+            const offer = await window.senderPC.createOffer({
+              offerToReceiveVideo: false,
+              voiceActivityDetection: false
+            });
+            console.log('📋 Offer created');
+            
+            console.log('🔧 Setting local description...');
+            await window.senderPC.setLocalDescription(offer);
+            console.log('✅ Local description set on sender');
+            
+            console.log('🔧 Using original SDP - relying on encoding parameters for quality');
+            
+            // Return only the serializable parts
+            return {
+              type: offer.type,
+              sdp: offer.sdp
+            };
+          } catch (error) {
+            console.error('❌ Error in sender offer creation:', error);
+            return { error: error.message, stack: error.stack };
+          }
+        })();
+      `);
+      
+      console.log('🔄 executeJavaScript completed, checking offer...');
+      
+      if (offer.error) {
+        throw new Error('Sender error: ' + offer.error);
+      }
+      
+      console.log('✅ Offer creation successful, moving to receiver...');
+    } catch (error) {
+      console.error('❌ Failed to create offer:', error);
+      throw error;
+    }
+    
+    try {
+      console.log('📥 Setting offer in receiver and creating answer...');
+      
+      // First check if child window is ready
+      if (!this.canvasWindow || this.canvasWindow.isDestroyed()) {
+        throw new Error('Child window is not available');
+      }
+      
+      console.log('🔍 Checking if child window is ready...');
+      const childReady = await this.canvasWindow.webContents.executeJavaScript(`
+        // Quick test to see if child window is responsive
+        (function() {
+          console.log('🏓 Child window ping test');
+          return { ready: true, hasReceiverPC: !!window.receiverPC };
+        })();
+      `);
+      
+      console.log('🏓 Child window status:', childReady);
+      
+      if (!childReady.hasReceiverPC) {
+        throw new Error('Receiver PC not found in child window');
+      }
+      
+      // Set offer in receiver (child window) and create answer
+      const offerData = JSON.stringify(offer);
+      const answer = await this.canvasWindow.webContents.executeJavaScript(`
+        (async () => {
+          try {
+            const offer = ${offerData};
+            console.log('📥 Received offer in child window:', offer.type);
+            
+            if (!window.receiverPC) {
+              throw new Error('receiverPC not available');
+            }
+            
+            console.log('🔧 Setting remote description...');
+            await window.receiverPC.setRemoteDescription(offer);
+            console.log('✅ Remote description set on receiver');
+            
+            console.log('📋 Creating answer...');
+            const answer = await window.receiverPC.createAnswer();
+            console.log('📋 Answer created:', answer.type, answer.sdp.length, 'chars');
+            
+            console.log('🔧 Setting local description on receiver...');
+            await window.receiverPC.setLocalDescription(answer);
+            console.log('✅ Local description set on receiver');
+            
+            // Return only the serializable parts
+            return {
+              type: answer.type,
+              sdp: answer.sdp
+            };
+          } catch (error) {
+            console.error('❌ Error in receiver answer creation:', error);
+            console.error('❌ Error details:', error.message, error.stack);
+            throw error;
+          }
+        })();
+      `);
+      
+      console.log('📤 Setting answer in sender...');
+      // Set answer in sender  
+      const answerData = JSON.stringify(answer);
+      await this.mainWindow.webContents.executeJavaScript(`
+        (async () => {
+          try {
+            const answer = ${answerData};
+            console.log('📥 Received answer in sender:', answer.type);
+            
+            console.log('🔧 Setting remote description on sender...');
+            await window.senderPC.setRemoteDescription(answer);
+            console.log('✅ Remote description set on sender');
+            
+            // Log final connection state
+            console.log('📡 Final sender connection state:', window.senderPC.connectionState);
+            console.log('🧊 Final sender ICE state:', window.senderPC.iceConnectionState);
+            
+          } catch (error) {
+            console.error('❌ Error setting answer in sender:', error);
+            throw error;
+          }
+        })();
+      `);
+      
+      console.log('✅ WebRTC peer connection handshake complete');
+      
+      // Wait a bit for ICE connection to establish
+      setTimeout(() => {
+        this.checkConnectionStatus();
+      }, 2000);
+      
+    } catch (error) {
+      console.error('❌ Failed to establish WebRTC connection:', error);
+    }
+  }
+
+  async checkConnectionStatus() {
+    try {
+      const senderStatus = await this.mainWindow.webContents.executeJavaScript(`
+        ({
+          connectionState: window.senderPC.connectionState,
+          iceConnectionState: window.senderPC.iceConnectionState,
+          iceGatheringState: window.senderPC.iceGatheringState
+        })
+      `);
+      
+      const receiverStatus = await this.canvasWindow.webContents.executeJavaScript(`
+        ({
+          connectionState: window.receiverPC.connectionState,
+          iceConnectionState: window.receiverPC.iceConnectionState,
+          iceGatheringState: window.receiverPC.iceGatheringState
+        })
+      `);
+      
+      console.log('📊 Connection Status:');
+      console.log('  Sender:', senderStatus);
+      console.log('  Receiver:', receiverStatus);
+      
+    } catch (error) {
+      console.error('Error checking connection status:', error);
+    }
+  }
+
+  async stopCanvasStreaming() {
+    if (!this.canvasStreaming.isStreaming) return;
+
+    try {
+      console.log('Stopping canvas streaming...');
+      
+      // Cleanup sender (main window)
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        await this.mainWindow.webContents.executeJavaScript(`
+          if (window.senderPC) {
+            try { 
+              window.senderPC.close(); 
+              window.senderPC = null;
+            } catch(e) {
+              console.error('Error closing sender PC:', e);
+            }
+          }
+          // Don't stop tracks from persistent stream - just disconnect from peer connection
+          if (window.canvasStream) {
+            console.log('📺 Disconnecting from persistent stream (keeping stream alive)');
+            window.canvasStream = null;
+          }
+          window.streamingToChild = false;
+        `);
+      }
+      
+      // Cleanup receiver (child window)
+      if (this.canvasWindow && !this.canvasWindow.isDestroyed()) {
+        await this.canvasWindow.webContents.executeJavaScript(`
+          if (window.receiverPC) {
+            try { 
+              window.receiverPC.close(); 
+              window.receiverPC = null;
+            } catch(e) {
+              console.error('Error closing receiver PC:', e);
+            }
+          }
+        `);
+      }
+      
+      this.canvasStreaming.isStreaming = false;
+      console.log('Canvas streaming stopped');
+      
+    } catch (error) {
+      console.error('Error stopping canvas streaming:', error);
+    }
   }
 
   createApplicationMenu() {
@@ -368,6 +1143,77 @@ class KaiPlayerApp {
       } catch (error) {
         console.error('Failed to reload KAI file:', error);
         return { success: false, error: error.message };
+      }
+    });
+
+    ipcMain.handle('window:openCanvas', () => {
+      this.createCanvasWindow();
+      return { success: true };
+    });
+
+    ipcMain.handle('canvas:startStreaming', () => {
+      this.startCanvasStreaming();
+      return { success: true };
+    });
+
+    ipcMain.handle('canvas:stopStreaming', () => {
+      this.stopCanvasStreaming();
+      return { success: true };
+    });
+
+    ipcMain.handle('canvas:sendImageData', (event, imageDataArray, width, height) => {
+      if (this.canvasWindow && !this.canvasWindow.isDestroyed()) {
+        this.canvasWindow.webContents.send('canvas:receiveImageData', imageDataArray, width, height);
+      }
+    });
+
+    ipcMain.on('canvas:childReady', () => {
+      console.log('Child window ready, starting canvas streaming');
+      // Small delay to ensure everything is fully initialized
+      setTimeout(() => {
+        this.startCanvasStreaming();
+      }, 100);
+    });
+
+    ipcMain.handle('canvas:sendICECandidate', (event, source, candidate) => {
+      console.log('🧊 Relaying ICE candidate from', source);
+      if (source === 'sender') {
+        // Send to receiver
+        if (this.canvasWindow && !this.canvasWindow.isDestroyed()) {
+          this.canvasWindow.webContents.executeJavaScript(`
+            if (window.receiverPC) {
+              const candidate = new RTCIceCandidate(${JSON.stringify(candidate)});
+              window.receiverPC.addIceCandidate(candidate);
+              console.log('🧊 Added ICE candidate to receiver');
+            }
+          `);
+        }
+      } else if (source === 'receiver') {
+        // Send to sender
+        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+          this.mainWindow.webContents.executeJavaScript(`
+            if (window.senderPC) {
+              const candidate = new RTCIceCandidate(${JSON.stringify(candidate)});
+              window.senderPC.addIceCandidate(candidate);
+              console.log('🧊 Added ICE candidate to sender');
+            }
+          `);
+        }
+      }
+    });
+
+    ipcMain.handle('canvas:toggleFullscreen', (event, shouldBeFullscreen) => {
+      if (this.canvasWindow && !this.canvasWindow.isDestroyed()) {
+        console.log('🖥️ Toggling canvas window fullscreen:', shouldBeFullscreen);
+        this.canvasWindow.setFullScreen(shouldBeFullscreen);
+        return { success: true, fullscreen: shouldBeFullscreen };
+      }
+      return { success: false, error: 'Canvas window not available' };
+    });
+
+    ipcMain.handle('canvas:sendFrame', (event, dataUrl) => {
+      if (this.canvasWindow && !this.canvasWindow.isDestroyed()) {
+        this.canvasWindow.webContents.send('canvas:receiveFrame', dataUrl);
       }
     });
   }
