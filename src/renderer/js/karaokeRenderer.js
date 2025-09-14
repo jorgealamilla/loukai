@@ -1585,6 +1585,12 @@ class KaraokeRenderer {
         this.drawMicrophoneWaveform(width, height);
         const micEnd = shouldProfile ? performance.now() : 0;
         
+        // If song is loaded but not playing, show song info instead of lyrics
+        if (!this.isPlaying && window.appInstance && window.appInstance.currentSong) {
+            this.drawSongInfo(width, height, window.appInstance.currentSong);
+            return;
+        }
+        
         if (!this.lyrics || this.lyrics.length === 0) {
             return;
         }
@@ -2427,6 +2433,41 @@ class KaraokeRenderer {
         this.ctx.arc(ballX, ballY, this.settings.ballSize, 0, Math.PI * 2);
         this.ctx.fill();
         this.ctx.restore();
+    }
+    
+    // Draw song info when loaded but not playing
+    drawSongInfo(width, height, songData) {
+        const ctx = this.ctx;
+        ctx.save();
+        
+        // Get song info from various possible locations
+        const title = songData.title || songData.metadata?.title || songData.name?.replace('.kai', '') || 'Unknown Title';
+        const artist = songData.artist || songData.metadata?.artist || 'Unknown Artist';
+        
+        // Center position
+        const centerX = width / 2;
+        const centerY = height / 2;
+        
+        // Draw title
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 72px Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        // Add text shadow for better visibility
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+        ctx.shadowBlur = 4;
+        ctx.shadowOffsetX = 2;
+        ctx.shadowOffsetY = 2;
+        
+        ctx.fillText(title, centerX, centerY - 50);
+        
+        // Draw artist
+        ctx.fillStyle = '#cccccc';
+        ctx.font = '48px Arial, sans-serif';
+        ctx.fillText(artist, centerX, centerY + 50);
+        
+        ctx.restore();
     }
     
     destroy() {

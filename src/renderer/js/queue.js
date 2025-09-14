@@ -8,15 +8,43 @@ class QueueManager {
     }
 
     setupEventListeners() {
-        // Queue control buttons
-        document.getElementById('clearQueueBtn')?.addEventListener('click', () => {
+
+        // Player sidebar queue controls
+        document.getElementById('playerClearQueueBtn')?.addEventListener('click', () => {
             if (this.queue.length > 0 && confirm('Are you sure you want to clear the queue?')) {
                 this.clearQueue();
             }
         });
 
-        document.getElementById('shuffleQueueBtn')?.addEventListener('click', () => {
+        document.getElementById('playerShuffleQueueBtn')?.addEventListener('click', () => {
             this.shuffleQueue();
+        });
+
+        // Quick search functionality
+        const quickSearch = document.getElementById('quickLibrarySearch');
+        if (quickSearch) {
+            quickSearch.addEventListener('input', (e) => {
+                this.handleQuickSearch(e.target.value);
+            });
+            
+            quickSearch.addEventListener('focus', (e) => {
+                if (e.target.value.trim()) {
+                    this.showSearchDropdown();
+                }
+            });
+            
+            quickSearch.addEventListener('blur', (e) => {
+                // Delay hiding to allow clicks on dropdown items
+                setTimeout(() => this.hideSearchDropdown(), 150);
+            });
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            const searchControls = document.querySelector('.quick-search-controls');
+            if (searchControls && !searchControls.contains(e.target)) {
+                this.hideSearchDropdown();
+            }
         });
 
         // Listen for song end events to auto-advance
@@ -36,6 +64,31 @@ class QueueManager {
         };
         
         this.queue.push(queueItem);
+        this.updateQueueDisplay();
+        
+        return queueItem;
+    }
+
+    // Add song to top of queue (for immediate loading)
+    addSongToTop(songData) {
+        const queueItem = {
+            id: Date.now() + Math.random(), // Unique ID
+            path: songData.path,
+            title: songData.title || songData.name.replace('.kai', ''),
+            artist: songData.artist || 'Unknown Artist',
+            duration: songData.duration,
+            folder: songData.folder,
+            addedAt: new Date()
+        };
+        
+        // Add to beginning of queue
+        this.queue.unshift(queueItem);
+        
+        // Adjust current index since we inserted at the beginning
+        if (this.currentIndex >= 0) {
+            this.currentIndex++;
+        }
+        
         this.updateQueueDisplay();
         
         return queueItem;
@@ -196,118 +249,10 @@ class QueueManager {
 
     // Update the queue display UI
     updateQueueDisplay() {
-        const queueBody = document.getElementById('queueTableBody');
-        const queueCount = document.getElementById('queueCount');
-        const queueDuration = document.getElementById('queueDuration');
-        
-        if (!queueBody || !queueCount) return;
-        
-        // Update count and duration
-        const stats = this.getQueueStats();
-        queueCount.textContent = `${stats.count} songs`;
-        if (queueDuration) {
-            queueDuration.textContent = stats.totalDuration > 0 ? 
-                `Total: ${this.formatDuration(stats.totalDuration)}` : '';
-        }
-        
-        if (this.queue.length === 0) {
-            queueBody.innerHTML = `
-                <tr class="queue-empty-row">
-                    <td colspan="5">
-                        <div class="queue-empty">
-                            <div class="empty-icon">🎵</div>
-                            <div class="empty-message">Queue is empty</div>
-                            <div class="empty-detail">Add songs from the library to build your queue</div>
-                        </div>
-                    </td>
-                </tr>
-            `;
-            return;
-        }
-
-        // Build queue rows
-        const rowsHTML = this.queue.map((item, index) => {
-            const isCurrentSong = index === this.currentIndex;
-            const rowClass = isCurrentSong ? 'queue-row current-song' : 'queue-row';
-            const statusIcon = isCurrentSong ? 'play_arrow' : (index < this.currentIndex ? 'done' : 'queue_music');
-            
-            return `
-                <tr class="${rowClass}" data-item-id="${item.id}">
-                    <td class="col-status">
-                        <span class="material-icons queue-status">${statusIcon}</span>
-                    </td>
-                    <td class="col-position">${index + 1}</td>
-                    <td class="col-title" title="${item.title}">${item.title}</td>
-                    <td class="col-artist" title="${item.artist}">${item.artist}</td>
-                    <td class="col-actions">
-                        <div class="queue-actions">
-                            <button class="action-btn play-queue-btn" data-item-id="${item.id}" title="Play Now">
-                                <span class="material-icons">play_arrow</span>
-                            </button>
-                            <button class="action-btn move-up-btn" data-item-id="${item.id}" title="Move Up" ${index === 0 ? 'disabled' : ''}>
-                                <span class="material-icons">keyboard_arrow_up</span>
-                            </button>
-                            <button class="action-btn move-down-btn" data-item-id="${item.id}" title="Move Down" ${index === this.queue.length - 1 ? 'disabled' : ''}>
-                                <span class="material-icons">keyboard_arrow_down</span>
-                            </button>
-                            <button class="action-btn remove-queue-btn" data-item-id="${item.id}" title="Remove">
-                                <span class="material-icons">delete</span>
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-        
-        queueBody.innerHTML = rowsHTML;
-        
-        // Attach event listeners to new buttons
-        this.attachQueueActionListeners();
+        // Only update player sidebar queue now
+        this.updatePlayerQueueDisplay();
     }
 
-    attachQueueActionListeners() {
-        // Play from queue
-        document.querySelectorAll('.play-queue-btn').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const itemId = parseInt(btn.dataset.itemId);
-                await this.playFromQueue(itemId);
-            });
-        });
-
-        // Move up
-        document.querySelectorAll('.move-up-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const itemId = parseInt(btn.dataset.itemId);
-                const currentIndex = this.queue.findIndex(item => item.id === itemId);
-                if (currentIndex > 0) {
-                    this.moveSong(itemId, currentIndex - 1);
-                }
-            });
-        });
-
-        // Move down
-        document.querySelectorAll('.move-down-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const itemId = parseInt(btn.dataset.itemId);
-                const currentIndex = this.queue.findIndex(item => item.id === itemId);
-                if (currentIndex < this.queue.length - 1) {
-                    this.moveSong(itemId, currentIndex + 1);
-                }
-            });
-        });
-
-        // Remove from queue
-        document.querySelectorAll('.remove-queue-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const itemId = parseInt(btn.dataset.itemId);
-                this.removeSong(itemId);
-            });
-        });
-    }
 
     // Get queue statistics
     getQueueStats() {
@@ -385,11 +330,211 @@ class QueueManager {
         
         return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
     }
+
+    // Update player sidebar queue display
+    updatePlayerQueueDisplay() {
+        const playerQueueList = document.getElementById('playerQueueList');
+        if (!playerQueueList) return;
+        
+        if (this.queue.length === 0) {
+            playerQueueList.innerHTML = `
+                <div class="player-queue-empty">
+                    <div class="empty-icon">🎵</div>
+                    <div class="empty-message">Queue is empty</div>
+                </div>
+            `;
+            return;
+        }
+
+        // Build queue items for player sidebar
+        const itemsHTML = this.queue.map((item, index) => {
+            const isCurrentSong = index === this.currentIndex;
+            const itemClass = isCurrentSong ? 'player-queue-item current' : 'player-queue-item';
+            
+            return `
+                <div class="${itemClass}" data-item-id="${item.id}">
+                    <div class="queue-item-number">${index + 1}</div>
+                    <div class="queue-item-info">
+                        <div class="queue-item-title" title="${item.title}">${item.title}</div>
+                        <div class="queue-item-artist" title="${item.artist}">${item.artist}</div>
+                    </div>
+                    <div class="queue-item-actions">
+                        <button class="queue-item-btn play-queue-sidebar-btn" data-item-id="${item.id}" title="Play Now">▶️</button>
+                        <button class="queue-item-btn remove-queue-sidebar-btn" data-item-id="${item.id}" title="Remove">❌</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        playerQueueList.innerHTML = itemsHTML;
+        
+        // Attach event listeners to new buttons
+        this.attachPlayerQueueListeners();
+    }
+
+    // Attach event listeners for player queue sidebar
+    attachPlayerQueueListeners() {
+        // Play from sidebar queue
+        document.querySelectorAll('.play-queue-sidebar-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const itemId = parseFloat(btn.dataset.itemId);
+                await this.playFromQueue(itemId, false); // Don't switch tabs since we're already in player
+            });
+        });
+
+        // Remove from sidebar queue
+        document.querySelectorAll('.remove-queue-sidebar-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const itemId = parseFloat(btn.dataset.itemId);
+                this.removeSong(itemId);
+            });
+        });
+    }
+
+    // Handle quick library search
+    async handleQuickSearch(searchTerm) {
+        const resultsContainer = document.getElementById('quickSearchResults');
+        if (!resultsContainer) return;
+        
+        if (!searchTerm.trim()) {
+            this.hideSearchDropdown();
+            return;
+        }
+
+        // Get library data (assuming window.libraryManager exists)
+        if (!window.libraryManager || !window.libraryManager.songs) {
+            resultsContainer.innerHTML = '<div class="no-search-message">Library not loaded</div>';
+            this.showSearchDropdown();
+            return;
+        }
+
+        const searchLower = searchTerm.toLowerCase();
+        const matches = window.libraryManager.songs
+            .filter(song => 
+                song.title.toLowerCase().includes(searchLower) ||
+                song.artist.toLowerCase().includes(searchLower)
+            )
+            .slice(0, 8); // Limit to first 8 results for dropdown
+
+        if (matches.length === 0) {
+            resultsContainer.innerHTML = '<div class="no-search-message">No matches found</div>';
+            this.showSearchDropdown();
+            return;
+        }
+
+        const resultsHTML = matches.map(song => `
+            <div class="quick-search-item" data-song-path="${song.path}">
+                <div class="quick-search-info">
+                    <div class="quick-search-title">${song.title}</div>
+                    <div class="quick-search-artist">${song.artist}</div>
+                </div>
+                <div class="quick-search-buttons">
+                    <button class="quick-search-add" data-song-path="${song.path}">Add</button>
+                    <button class="quick-search-load" data-song-path="${song.path}">Load</button>
+                </div>
+            </div>
+        `).join('');
+
+        resultsContainer.innerHTML = resultsHTML;
+        this.showSearchDropdown();
+
+        // Attach add to queue listeners
+        document.querySelectorAll('.quick-search-add').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const songPath = btn.dataset.songPath;
+                const song = window.libraryManager.songs.find(s => s.path === songPath);
+                if (song) {
+                    const wasQueueEmpty = this.queue.length === 0;
+                    const queueItem = this.addSong(song);
+                    
+                    const title = song.title || song.name.replace('.kai', '');
+                    
+                    // If queue was empty, start playing this first song
+                    if (wasQueueEmpty) {
+                        await this.playFromQueue(queueItem.id, false); // Don't switch tabs since we're already in player
+                        this.showToast(`Playing "${title}" from queue`);
+                    } else {
+                        this.showToast(`Added "${title}" to queue`);
+                    }
+                    
+                    // Show brief feedback then revert
+                    const originalText = btn.textContent;
+                    btn.textContent = '✓';
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                    }, 300);
+                    
+                    // Clear search text and hide dropdown
+                    const searchInput = document.getElementById('quickLibrarySearch');
+                    if (searchInput) {
+                        searchInput.value = '';
+                    }
+                    setTimeout(() => this.hideSearchDropdown(), 500);
+                }
+            });
+        });
+
+        // Attach load button listeners
+        document.querySelectorAll('.quick-search-load').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const songPath = btn.dataset.songPath;
+                const song = window.libraryManager.songs.find(s => s.path === songPath);
+                if (song) {
+                    const queueItem = this.addSongToTop(song);
+                    const title = song.title || song.name.replace('.kai', '');
+                    
+                    // Load and play the song immediately
+                    await this.playFromQueue(queueItem.id, false);
+                    this.showToast(`Loading "${title}" now`);
+                    
+                    // Show brief feedback then revert
+                    const originalText = btn.textContent;
+                    btn.textContent = '✓';
+                    setTimeout(() => {
+                        btn.textContent = originalText;
+                    }, 300);
+                    
+                    // Clear search text and hide dropdown
+                    const searchInput = document.getElementById('quickLibrarySearch');
+                    if (searchInput) {
+                        searchInput.value = '';
+                    }
+                    setTimeout(() => this.hideSearchDropdown(), 500);
+                }
+            });
+        });
+    }
+
+    showSearchDropdown() {
+        const dropdown = document.getElementById('quickSearchResults');
+        if (dropdown) {
+            dropdown.style.display = 'block';
+        }
+    }
+
+    hideSearchDropdown() {
+        const dropdown = document.getElementById('quickSearchResults');
+        if (dropdown) {
+            dropdown.style.display = 'none';
+        }
+    }
+
+    showToast(message) {
+        // Use library manager's toast if available, otherwise fallback to console
+        if (window.libraryManager && window.libraryManager.showToast) {
+            window.libraryManager.showToast(message);
+        } else {
+            console.log('🎵 ' + message);
+        }
+    }
 }
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    if (document.getElementById('queue-tab')) {
-        window.queueManager = new QueueManager();
-    }
+    // Always initialize queue manager since it's used by the player sidebar
+    window.queueManager = new QueueManager();
 });
