@@ -60,7 +60,7 @@ class RendererAudioEngine {
     async initialize() {
         try {
             // Load saved device preferences first
-            this.loadDevicePreferences();
+            await this.loadDevicePreferences();
             
             // Initialize PA audio context with saved device
             const paContextOptions = {};
@@ -90,16 +90,17 @@ class RendererAudioEngine {
         }
     }
     
-    loadDevicePreferences() {
+    async loadDevicePreferences() {
         try {
-            const saved = localStorage.getItem('kaiPlayerDevicePrefs');
-            if (saved) {
-                const prefs = JSON.parse(saved);
-                if (prefs.PA?.id) {
-                    this.outputDevices.PA = prefs.PA.id;
-                }
-                if (prefs.IEM?.id) {
-                    this.outputDevices.IEM = prefs.IEM.id;
+            if (window.settingsAPI) {
+                const prefs = await window.settingsAPI.getDevicePreferences();
+                if (prefs) {
+                    if (prefs.PA?.id) {
+                        this.outputDevices.PA = prefs.PA.id;
+                    }
+                    if (prefs.IEM?.id) {
+                        this.outputDevices.IEM = prefs.IEM.id;
+                    }
                 }
             }
         } catch (error) {

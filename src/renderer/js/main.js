@@ -23,6 +23,8 @@ class KaiPlayerApp {
             micToSpeakers: true,
             enableMic: true,
             enableEffects: true,
+            randomEffectOnSong: false,
+            disabledEffects: [],
             overlayOpacity: 0.5,
             showUpcomingLyrics: true
         };
@@ -32,6 +34,9 @@ class KaiPlayerApp {
             strength: 50,
             speed: 20
         };
+        
+        // Debounce timer for random effects
+        this.randomEffectTimeout = null;
         
         this.init();
     }
@@ -322,6 +327,31 @@ class KaiPlayerApp {
                     
                     // Update effect display with current preset
                     setTimeout(() => this.updateEffectDisplay(), 100);
+                    
+                    // Apply random effect if enabled (with debouncing)
+                    if (this.waveformPreferences.randomEffectOnSong) {
+                        // Clear any existing timeout
+                        if (this.randomEffectTimeout) {
+                            clearTimeout(this.randomEffectTimeout);
+                        }
+                        
+                        this.randomEffectTimeout = setTimeout(() => {
+                            if (window.effectsManager && typeof window.effectsManager.selectRandomEffect === 'function') {
+                                console.log('🎲 Applying random effect for new song...');
+                                window.effectsManager.selectRandomEffect();
+                            } else {
+                                console.warn('Effects manager not available for random effect');
+                                // Retry once more after a longer delay
+                                setTimeout(() => {
+                                    if (window.effectsManager && typeof window.effectsManager.selectRandomEffect === 'function') {
+                                        console.log('🎲 Retrying random effect selection...');
+                                        window.effectsManager.selectRandomEffect();
+                                    }
+                                }, 1000);
+                            }
+                            this.randomEffectTimeout = null;
+                        }, 500);
+                    }
                 }
             }
             
@@ -568,6 +598,7 @@ class KaiPlayerApp {
         const micToSpeakers = document.getElementById('micToSpeakers');
         const enableMic = document.getElementById('enableMic');
         const enableEffects = document.getElementById('enableEffects');
+        const randomEffectOnSong = document.getElementById('randomEffectOnSong');
         const enableUpcomingLyrics = document.getElementById('showUpcomingLyrics');
         
         enableWaveforms?.addEventListener('change', (e) => {
@@ -612,6 +643,13 @@ class KaiPlayerApp {
             if (this.player && this.player.karaokeRenderer) {
                 this.player.karaokeRenderer.setEffectsEnabled(e.target.checked);
             }
+        });
+        
+        randomEffectOnSong?.addEventListener('change', (e) => {
+            console.log('Random effect setting changed to:', e.target.checked);
+            this.waveformPreferences.randomEffectOnSong = e.target.checked;
+            this.saveWaveformPreferences();
+            console.log('Saved random effect preference:', this.waveformPreferences.randomEffectOnSong);
         });
         
         enableUpcomingLyrics?.addEventListener('change', (e) => {
@@ -699,13 +737,13 @@ class KaiPlayerApp {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
-    initializeSidebarState() {
-        const savedState = localStorage.getItem('sidebarCollapsed');
+    async initializeSidebarState() {
+        const savedState = await window.settingsAPI.getSidebarCollapsed();
         const sidebar = document.querySelector('.sidebar');
         const hamburgerIcon = document.querySelector('#hamburgerBtn .material-icons');
         
-        // Default is open (savedState === 'true' means collapsed)
-        if (savedState === 'true') {
+        // Default is open (savedState === true means collapsed)
+        if (savedState) {
             sidebar?.classList.add('collapsed');
             if (hamburgerIcon) hamburgerIcon.textContent = 'menu_open';
         } else {
@@ -714,7 +752,7 @@ class KaiPlayerApp {
         }
     }
 
-    toggleSidebar() {
+    async toggleSidebar() {
         const sidebar = document.querySelector('.sidebar');
         const hamburgerIcon = document.querySelector('#hamburgerBtn .material-icons');
         
@@ -725,12 +763,12 @@ class KaiPlayerApp {
                 // Expand sidebar
                 sidebar.classList.remove('collapsed');
                 if (hamburgerIcon) hamburgerIcon.textContent = 'menu';
-                localStorage.setItem('sidebarCollapsed', 'false');
+                await window.settingsAPI.setSidebarCollapsed(false);
             } else {
                 // Collapse sidebar
                 sidebar.classList.add('collapsed');
                 if (hamburgerIcon) hamburgerIcon.textContent = 'menu_open';
-                localStorage.setItem('sidebarCollapsed', 'true');
+                await window.settingsAPI.setSidebarCollapsed(true);
             }
         }
     }
@@ -903,11 +941,11 @@ class KaiPlayerApp {
     }
     
     // Device persistence methods
-    loadDevicePreferences() {
+    async loadDevicePreferences() {
         try {
-            const saved = localStorage.getItem('kaiPlayerDevicePrefs');
+            const saved = await window.settingsAPI.getDevicePreferences();
             if (saved) {
-                this.devicePreferences = { ...this.devicePreferences, ...JSON.parse(saved) };
+                this.devicePreferences = { ...this.devicePreferences, ...saved };
             }
         } catch (error) {
             console.warn('Failed to load device preferences:', error);
@@ -915,24 +953,28 @@ class KaiPlayerApp {
     }
     
     // Waveform preferences methods
-    loadWaveformPreferences() {
+    async loadWaveformPreferences() {
         try {
-            const saved = localStorage.getItem('kaiPlayerWaveformPrefs');
+            const saved = await window.settingsAPI.getWaveformPreferences();
             if (saved) {
-                this.waveformPreferences = { ...this.waveformPreferences, ...JSON.parse(saved) };
+                this.waveformPreferences = { ...this.waveformPreferences, ...saved };
                 
                 // Apply saved preferences to checkboxes
                 const enableWaveforms = document.getElementById('enableWaveforms');
                 const micToSpeakers = document.getElementById('micToSpeakers');
                 const enableMic = document.getElementById('enableMic');
                 const enableEffects = document.getElementById('enableEffects');
-                
+                const randomEffectOnSong = document.getElementById('randomEffectOnSong');
                 const showUpcomingLyrics = document.getElementById('showUpcomingLyrics');
                 
                 if (enableWaveforms) enableWaveforms.checked = this.waveformPreferences.enableWaveforms;
                 if (micToSpeakers) micToSpeakers.checked = this.waveformPreferences.micToSpeakers;
                 if (enableMic) enableMic.checked = this.waveformPreferences.enableMic;
                 if (enableEffects) enableEffects.checked = this.waveformPreferences.enableEffects;
+                if (randomEffectOnSong) {
+                    randomEffectOnSong.checked = this.waveformPreferences.randomEffectOnSong;
+                    console.log('Loaded random effect preference:', this.waveformPreferences.randomEffectOnSong, 'checkbox set to:', randomEffectOnSong.checked);
+                }
                 if (showUpcomingLyrics) showUpcomingLyrics.checked = this.waveformPreferences.showUpcomingLyrics;
                 
                 // Apply saved overlay opacity
@@ -945,24 +987,29 @@ class KaiPlayerApp {
                     }
                 }
             }
+            
+            // Reload disabled effects in the effects manager if it's available
+            if (window.effectsManager && typeof window.effectsManager.reloadFromMainPreferences === 'function') {
+                window.effectsManager.reloadFromMainPreferences();
+            }
         } catch (error) {
             console.warn('Failed to load waveform preferences:', error);
         }
     }
     
-    saveWaveformPreferences() {
+    async saveWaveformPreferences() {
         try {
-            localStorage.setItem('kaiPlayerWaveformPrefs', JSON.stringify(this.waveformPreferences));
+            await window.settingsAPI.setWaveformPreferences(this.waveformPreferences);
         } catch (error) {
             console.warn('Failed to save waveform preferences:', error);
         }
     }
     
-    loadAutoTunePreferences() {
+    async loadAutoTunePreferences() {
         try {
-            const saved = localStorage.getItem('kaiPlayerAutoTunePrefs');
+            const saved = await window.settingsAPI.getAutoTunePreferences();
             if (saved) {
-                this.autoTunePreferences = { ...this.autoTunePreferences, ...JSON.parse(saved) };
+                this.autoTunePreferences = { ...this.autoTunePreferences, ...saved };
                 
                 // Apply saved preferences to controls
                 const autotuneEnabled = document.getElementById('autotuneEnabled');
@@ -989,15 +1036,15 @@ class KaiPlayerApp {
         }
     }
     
-    saveAutoTunePreferences() {
+    async saveAutoTunePreferences() {
         try {
-            localStorage.setItem('kaiPlayerAutoTunePrefs', JSON.stringify(this.autoTunePreferences));
+            await window.settingsAPI.setAutoTunePreferences(this.autoTunePreferences);
         } catch (error) {
             console.warn('Failed to save auto-tune preferences:', error);
         }
     }
     
-    saveDevicePreference(deviceType, deviceId) {
+    async saveDevicePreference(deviceType, deviceId) {
         try {
             // Store device info for better matching
             const device = this.devices.find(d => (d.id || d.deviceId) === deviceId);
@@ -1011,7 +1058,7 @@ class KaiPlayerApp {
                 this.devicePreferences[deviceType] = { id: deviceId };
             }
             
-            localStorage.setItem('kaiPlayerDevicePrefs', JSON.stringify(this.devicePreferences));
+            await window.settingsAPI.setDevicePreferences(this.devicePreferences);
         } catch (error) {
             console.warn('Failed to save device preference:', error);
         }
@@ -1064,7 +1111,7 @@ class KaiPlayerApp {
             } else {
                 // Clear invalid preference
                 this.devicePreferences[type] = null;
-                localStorage.setItem('kaiPlayerDevicePrefs', JSON.stringify(this.devicePreferences));
+                await this.saveDevicePreferences();
             }
         }
     }

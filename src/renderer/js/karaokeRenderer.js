@@ -203,11 +203,21 @@ class KaraokeRenderer {
                         'martin - being & time'                  // Dynamic movement
                     ];
                     
-                    const startPreset = defaultPresets.find(p => this.presetList.includes(p)) || this.presetList[0];
-                    if (startPreset) {
-                        const presetData = window.butterchurnPresets.getPresets()[startPreset];
-                        this.butterchurn.loadPreset(presetData, 0.0); // 0 second transition
-                        this.currentPreset = startPreset;
+                    // Only load a default preset if no preset is currently selected
+                    // This prevents auto-resetting effects when new songs start
+                    if (!this.currentPreset) {
+                        const startPreset = defaultPresets.find(p => this.presetList.includes(p)) || this.presetList[0];
+                        if (startPreset) {
+                            const presetData = window.butterchurnPresets.getPresets()[startPreset];
+                            this.butterchurn.loadPreset(presetData, 0.0); // 0 second transition
+                            this.currentPreset = startPreset;
+                        }
+                    } else {
+                        // If we already have a current preset, reload it to maintain continuity
+                        if (this.presetList.includes(this.currentPreset)) {
+                            const presetData = window.butterchurnPresets.getPresets()[this.currentPreset];
+                            this.butterchurn.loadPreset(presetData, 0.0);
+                        }
                     }
                     
                     this.effectType = 'butterchurn';
@@ -467,17 +477,24 @@ class KaraokeRenderer {
             if (window.butterchurnPresets && window.butterchurnPresets.getPresets) {
                 this.presetList = Object.keys(window.butterchurnPresets.getPresets());
                 
-                // Load a reactive preset
-                const reactivePresets = [
-                    'Geiss - Pulse Vertex v1.02',
-                    'Rovastar & Geiss - Dynamic Noise v2.0',
-                    'martin - volume bar spectrogram v1.0'
-                ];
-                
-                for (const preset of reactivePresets) {
-                    if (this.presetList.includes(preset)) {
-                        this.butterchurn.loadPreset(window.butterchurnPresets.getPresets()[preset], 0.0);
-                        break;
+                // Restore the current preset if it exists, otherwise load a reactive preset
+                if (this.currentPreset && this.presetList.includes(this.currentPreset)) {
+                    const presetData = window.butterchurnPresets.getPresets()[this.currentPreset];
+                    this.butterchurn.loadPreset(presetData, 0.0);
+                } else {
+                    // Only load a reactive preset if no current preset exists
+                    const reactivePresets = [
+                        'Geiss - Pulse Vertex v1.02',
+                        'Rovastar & Geiss - Dynamic Noise v2.0',
+                        'martin - volume bar spectrogram v1.0'
+                    ];
+                    
+                    for (const preset of reactivePresets) {
+                        if (this.presetList.includes(preset)) {
+                            this.butterchurn.loadPreset(window.butterchurnPresets.getPresets()[preset], 0.0);
+                            this.currentPreset = preset;
+                            break;
+                        }
                     }
                 }
             }
@@ -724,16 +741,40 @@ class KaraokeRenderer {
     switchToNextPreset() {
         if (this.effectType === 'butterchurn' && this.butterchurn && this.presetList.length) {
             const currentIndex = this.presetList.indexOf(this.currentPreset);
-            const nextIndex = (currentIndex + 1) % this.presetList.length;
-            this.switchToPreset(this.presetList[nextIndex]);
+            let nextIndex = (currentIndex + 1) % this.presetList.length;
+            
+            // Skip disabled effects
+            const maxAttempts = this.presetList.length;
+            let attempts = 0;
+            while (attempts < maxAttempts && this.isEffectDisabled(this.presetList[nextIndex])) {
+                nextIndex = (nextIndex + 1) % this.presetList.length;
+                attempts++;
+            }
+            
+            // Only switch if we found an enabled effect
+            if (!this.isEffectDisabled(this.presetList[nextIndex])) {
+                this.switchToPreset(this.presetList[nextIndex]);
+            }
         }
     }
     
     switchToPreviousPreset() {
         if (this.effectType === 'butterchurn' && this.butterchurn && this.presetList.length) {
             const currentIndex = this.presetList.indexOf(this.currentPreset);
-            const prevIndex = currentIndex <= 0 ? this.presetList.length - 1 : currentIndex - 1;
-            this.switchToPreset(this.presetList[prevIndex]);
+            let prevIndex = currentIndex <= 0 ? this.presetList.length - 1 : currentIndex - 1;
+            
+            // Skip disabled effects
+            const maxAttempts = this.presetList.length;
+            let attempts = 0;
+            while (attempts < maxAttempts && this.isEffectDisabled(this.presetList[prevIndex])) {
+                prevIndex = prevIndex <= 0 ? this.presetList.length - 1 : prevIndex - 1;
+                attempts++;
+            }
+            
+            // Only switch if we found an enabled effect
+            if (!this.isEffectDisabled(this.presetList[prevIndex])) {
+                this.switchToPreset(this.presetList[prevIndex]);
+            }
         }
     }
     
@@ -750,6 +791,14 @@ class KaraokeRenderer {
         } catch (error) {
             console.error('Failed to switch preset:', error);
         }
+    }
+    
+    isEffectDisabled(effectName) {
+        // Check if the effectsManager exists and has disabled effects
+        if (window.effectsManager && window.effectsManager.disabledEffects) {
+            return window.effectsManager.disabledEffects.has(effectName);
+        }
+        return false;
     }
 
     setButterchurnPreset(presetData, transitionTime = 1.0) {
@@ -2310,25 +2359,24 @@ class KaraokeRenderer {
         
         // Restart microphone if it was enabled (with delay to prevent issues)
         if (this.waveformPreferences.enableMic) {
-            setTimeout(() => {
+            setTimeout(async () => {
                 // Ensure the input device selection is properly restored before starting
-                this.ensureInputDeviceSelection();
+                await this.ensureInputDeviceSelection();
                 this.startMicrophoneCapture();
             }, 200); // Extra delay after reinitialize to let everything settle
         }
         
     }
     
-    ensureInputDeviceSelection() {
+    async ensureInputDeviceSelection() {
         try {
-            // Get saved input device preference from localStorage
-            const saved = localStorage.getItem('kaiPlayerDevicePrefs');
-            if (saved) {
-                const prefs = JSON.parse(saved);
-                if (prefs.input) {
+            // Get saved input device preference from settings API
+            if (window.settingsAPI) {
+                const prefs = await window.settingsAPI.getDevicePreferences();
+                if (prefs && prefs.input) {
                     const inputSelect = document.getElementById('inputDeviceSelect');
-                    if (inputSelect && prefs.input !== inputSelect.value) {
-                        inputSelect.value = prefs.input;
+                    if (inputSelect && prefs.input.id !== inputSelect.value) {
+                        inputSelect.value = prefs.input.id;
                     }
                 }
             }

@@ -88,6 +88,13 @@ const api = {
     rejectRequest: (requestId) => ipcRenderer.invoke('webServer:rejectRequest', requestId)
   },
 
+  settings: {
+    get: (key, defaultValue) => ipcRenderer.invoke('settings:get', key, defaultValue),
+    set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
+    getAll: () => ipcRenderer.invoke('settings:getAll'),
+    updateBatch: (updates) => ipcRenderer.invoke('settings:updateBatch', updates)
+  },
+
   events: {
     on: (channel, callback) => ipcRenderer.on(channel, callback),
     removeListener: (channel, callback) => ipcRenderer.removeListener(channel, callback)

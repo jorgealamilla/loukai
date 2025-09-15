@@ -5,9 +5,19 @@ class EffectsManager {
         this.currentCategory = 'all';
         this.currentSearch = '';
         this.currentEffect = null;
+        this.disabledEffects = new Set(); // Track disabled effects
+        this.loadedFromMainPrefs = false; // Track if we loaded from main preferences
         
         this.setupEventListeners();
         this.loadPresets();
+        this.loadDisabledEffects();
+        
+        // Retry loading from main preferences after a delay if we haven't loaded from main prefs yet
+        setTimeout(() => {
+            if (!this.loadedFromMainPrefs) {
+                this.reloadFromMainPreferences();
+            }
+        }, 1000);
     }
 
     setupEventListeners() {
@@ -157,6 +167,10 @@ class EffectsManager {
             if (this.currentEffect && this.currentEffect.name === preset.name) {
                 effectItem.classList.add('active');
             }
+            
+            if (this.disabledEffects.has(preset.name)) {
+                effectItem.classList.add('disabled');
+            }
 
             // Use direct file path for screenshots with proper filename conversion
             const sanitizedName = this.sanitizeFilename(preset.name);
@@ -170,16 +184,16 @@ class EffectsManager {
                         <span class="material-icons">image_not_supported</span>
                     </div>
                 </div>
-                <div class="effect-info">
+                <div class="effect-info ${this.disabledEffects.has(preset.name) ? 'disabled' : ''}">
                     <div class="effect-category">${preset.category}</div>
                     <div class="effect-name">${preset.displayName}</div>
                     <div class="effect-author">by ${preset.author}</div>
                     <div class="effect-actions">
-                        <button class="effect-action-btn primary select-effect-btn" data-effect-name="${preset.name}">
-                            Select
+                        <button class="effect-action-btn primary use-effect-btn" data-effect-name="${preset.name}" ${this.disabledEffects.has(preset.name) ? 'disabled' : ''}>
+                            Use
                         </button>
-                        <button class="effect-action-btn preview-effect-btn" data-effect-name="${preset.name}">
-                            Preview
+                        <button class="effect-action-btn ${this.disabledEffects.has(preset.name) ? 'enable' : 'disable'}-effect-btn" data-effect-name="${preset.name}">
+                            ${this.disabledEffects.has(preset.name) ? 'Enable' : 'Disable'}
                         </button>
                     </div>
                 </div>
@@ -196,8 +210,8 @@ class EffectsManager {
     }
 
     attachEffectListeners() {
-        // Select effect buttons
-        document.querySelectorAll('.select-effect-btn').forEach(btn => {
+        // Use effect buttons
+        document.querySelectorAll('.use-effect-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const effectName = btn.dataset.effectName;
@@ -205,20 +219,22 @@ class EffectsManager {
             });
         });
 
-        // Preview effect buttons
-        document.querySelectorAll('.preview-effect-btn').forEach(btn => {
+        // Disable/Enable effect buttons
+        document.querySelectorAll('.disable-effect-btn, .enable-effect-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const effectName = btn.dataset.effectName;
-                this.previewEffect(effectName);
+                this.toggleEffectDisabled(effectName);
             });
         });
 
-        // Click on effect item to select
+        // Click on effect item to use (only if not disabled)
         document.querySelectorAll('.effect-item').forEach(item => {
             item.addEventListener('click', () => {
                 const effectName = item.dataset.effectName;
-                this.selectEffect(effectName);
+                if (!this.disabledEffects.has(effectName)) {
+                    this.selectEffect(effectName);
+                }
             });
         });
     }
@@ -237,8 +253,14 @@ class EffectsManager {
         document.querySelector(`[data-effect-name="${effectName}"]`)?.closest('.effect-item')?.classList.add('active');
 
         // Apply the effect to the karaoke renderer if available
-        if (window.karaokeRenderer && window.karaokeRenderer.setButterchurnPreset) {
-            window.karaokeRenderer.setButterchurnPreset(preset.preset);
+        if (window.appInstance && window.appInstance.player && window.appInstance.player.karaokeRenderer) {
+            const renderer = window.appInstance.player.karaokeRenderer;
+            if (renderer.setButterchurnPreset) {
+                console.log('🎨 Applying effect to karaoke renderer:', preset.displayName);
+                renderer.setButterchurnPreset(preset.preset);
+            }
+        } else {
+            console.warn('Karaoke renderer not available for effect:', preset.displayName);
         }
 
         // Update the main app's effect display
@@ -246,38 +268,48 @@ class EffectsManager {
             setTimeout(() => window.appInstance.updateEffectDisplay(), 100);
         }
 
-        console.log('Selected effect:', preset.displayName, 'by', preset.author);
+        console.log('🎨 Selected effect:', preset.displayName, 'by', preset.author, '(' + preset.name + ')');
     }
 
-    previewEffect(effectName) {
-        // For preview, we could temporarily apply the effect for a few seconds
-        // then revert to the previous effect
+    toggleEffectDisabled(effectName) {
         const preset = this.presets.find(p => p.name === effectName);
         if (!preset) return;
 
-        const previousEffect = this.currentEffect;
-        
-        // Apply preview effect
-        if (window.karaokeRenderer && window.karaokeRenderer.setButterchurnPreset) {
-            window.karaokeRenderer.setButterchurnPreset(preset.preset);
+        if (this.disabledEffects.has(effectName)) {
+            // Enable the effect
+            this.disabledEffects.delete(effectName);
+            console.log('Enabled effect:', preset.displayName);
+        } else {
+            // Disable the effect
+            this.disabledEffects.add(effectName);
+            console.log('Disabled effect:', preset.displayName);
+            
+            // If the currently selected effect is being disabled, don't change it
+            // The user should manually select a different effect
         }
 
-        // Revert after 3 seconds
-        setTimeout(() => {
-            if (previousEffect && window.karaokeRenderer && window.karaokeRenderer.setButterchurnPreset) {
-                window.karaokeRenderer.setButterchurnPreset(previousEffect.preset);
-            }
-        }, 3000);
-
-        console.log('Previewing effect:', preset.displayName, 'for 3 seconds');
+        // Save the updated disabled effects
+        this.saveDisabledEffects();
+        
+        // Refresh the display to update button states
+        this.displayPresets();
     }
 
     selectRandomEffect() {
         if (this.filteredPresets.length === 0) return;
         
-        const randomIndex = Math.floor(Math.random() * this.filteredPresets.length);
-        const randomPreset = this.filteredPresets[randomIndex];
+        // Filter out disabled effects
+        const enabledPresets = this.filteredPresets.filter(preset => !this.disabledEffects.has(preset.name));
         
+        if (enabledPresets.length === 0) {
+            console.warn('No enabled effects available for random selection');
+            return;
+        }
+        
+        const randomIndex = Math.floor(Math.random() * enabledPresets.length);
+        const randomPreset = enabledPresets[randomIndex];
+        
+        console.log('🎲 Randomly selected from', enabledPresets.length, 'enabled presets:', randomPreset.displayName, 'by', randomPreset.author);
         this.selectEffect(randomPreset.name);
     }
 
@@ -312,6 +344,96 @@ class EffectsManager {
         return name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
     }
 
+    async loadDisabledEffects() {
+        try {
+            // First try to get from main app preferences
+            if (window.appInstance && window.appInstance.waveformPreferences && window.appInstance.waveformPreferences.disabledEffects) {
+                const disabledArray = window.appInstance.waveformPreferences.disabledEffects;
+                this.disabledEffects = new Set(disabledArray);
+                this.loadedFromMainPrefs = true;
+                console.log('Loaded', this.disabledEffects.size, 'disabled effects from main preferences');
+                return;
+            }
+            
+            // Try to get from settings API
+            if (window.settingsAPI) {
+                const waveformPrefs = await window.settingsAPI.getWaveformPreferences();
+                if (waveformPrefs && waveformPrefs.disabledEffects) {
+                    const disabledArray = waveformPrefs.disabledEffects;
+                    this.disabledEffects = new Set(disabledArray);
+                    this.loadedFromMainPrefs = true;
+                    console.log('Loaded', this.disabledEffects.size, 'disabled effects from settings API');
+                    return;
+                }
+            }
+            
+            // Fallback to localStorage for backwards compatibility
+            const stored = localStorage.getItem('disabledEffects');
+            if (stored) {
+                const disabledArray = JSON.parse(stored);
+                this.disabledEffects = new Set(disabledArray);
+                console.log('Loaded', this.disabledEffects.size, 'disabled effects from localStorage (migrating to settings)');
+                
+                // Migrate to settings API if available
+                if (window.settingsAPI) {
+                    const currentPrefs = await window.settingsAPI.getWaveformPreferences();
+                    currentPrefs.disabledEffects = disabledArray;
+                    await window.settingsAPI.setWaveformPreferences(currentPrefs);
+                    this.loadedFromMainPrefs = true;
+                    // Remove old localStorage entry
+                    localStorage.removeItem('disabledEffects');
+                    console.log('Migrated disabled effects to settings API');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load disabled effects:', error);
+            this.disabledEffects = new Set();
+        }
+    }
+
+    async saveDisabledEffects() {
+        try {
+            const disabledArray = Array.from(this.disabledEffects);
+            
+            // Use settings API as primary method
+            if (window.settingsAPI) {
+                const currentPrefs = await window.settingsAPI.getWaveformPreferences();
+                currentPrefs.disabledEffects = disabledArray;
+                const result = await window.settingsAPI.setWaveformPreferences(currentPrefs);
+                if (result && result.success !== false) {
+                    console.log('Saved', disabledArray.length, 'disabled effects to settings API');
+                    return;
+                }
+            }
+            
+            // Save to main app preferences if settings API failed
+            if (window.appInstance && window.appInstance.waveformPreferences) {
+                window.appInstance.waveformPreferences.disabledEffects = disabledArray;
+                window.appInstance.saveWaveformPreferences();
+                console.log('Saved', disabledArray.length, 'disabled effects to main preferences (fallback)');
+            } else {
+                // Final fallback to localStorage (should be removed in future versions)
+                localStorage.setItem('disabledEffects', JSON.stringify(disabledArray));
+                console.log('Saved', disabledArray.length, 'disabled effects to localStorage (final fallback)');
+            }
+        } catch (error) {
+            console.error('Failed to save disabled effects:', error);
+        }
+    }
+
+    // Reload disabled effects from main app preferences (called after main app is initialized)
+    reloadFromMainPreferences() {
+        if (window.appInstance && window.appInstance.waveformPreferences && window.appInstance.waveformPreferences.disabledEffects) {
+            const disabledArray = window.appInstance.waveformPreferences.disabledEffects;
+            this.disabledEffects = new Set(disabledArray);
+            this.loadedFromMainPrefs = true;
+            console.log('Reloaded', this.disabledEffects.size, 'disabled effects from main preferences');
+            
+            // Refresh the display to show disabled state
+            this.displayPresets();
+        }
+    }
+
     // Get current effect info for external use
     getCurrentEffect() {
         return this.currentEffect;
@@ -324,9 +446,10 @@ class EffectsManager {
 
     // Sync UI with current karaoke renderer state
     syncWithRenderer() {
-        if (!window.karaokeRenderer) return;
+        if (!window.appInstance || !window.appInstance.player || !window.appInstance.player.karaokeRenderer) return;
         
-        const currentPresetName = window.karaokeRenderer.currentPreset;
+        const renderer = window.appInstance.player.karaokeRenderer;
+        const currentPresetName = renderer.currentPreset;
         if (currentPresetName && currentPresetName !== this.currentEffect?.name) {
             const preset = this.presets.find(p => p.name === currentPresetName);
             if (preset) {

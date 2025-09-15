@@ -1330,6 +1330,32 @@ class KaiPlayerApp {
         return { error: error.message };
       }
     });
+
+    // Settings management IPC handlers
+    ipcMain.handle('settings:get', (event, key, defaultValue = null) => {
+      return this.settings.get(key, defaultValue);
+    });
+
+    ipcMain.handle('settings:set', (event, key, value) => {
+      this.settings.set(key, value);
+      return { success: true };
+    });
+
+    ipcMain.handle('settings:getAll', () => {
+      return this.settings.settings;
+    });
+
+    ipcMain.handle('settings:updateBatch', (event, updates) => {
+      try {
+        for (const [key, value] of Object.entries(updates)) {
+          this.settings.settings[key] = value;
+        }
+        this.settings.save();
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error.message };
+      }
+    });
   }
 
   async scanForKaiFiles(folderPath) {
