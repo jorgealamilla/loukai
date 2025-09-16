@@ -103,15 +103,16 @@ class LibraryManager {
         } else {
             const term = searchTerm.toLowerCase();
             this.filteredSongs = this.songs.filter(song => {
-                // Search in filename, title, artist, genre, and stems
+                // Search in filename, title, artist, genre, key, and stems
                 return song.name.toLowerCase().includes(term) ||
                        (song.title && song.title.toLowerCase().includes(term)) ||
                        (song.artist && song.artist.toLowerCase().includes(term)) ||
                        (song.genre && song.genre.toLowerCase().includes(term)) ||
+                       (song.key && song.key.toLowerCase().includes(term)) ||
                        (song.stems && song.stems.some(stem => stem.toLowerCase().includes(term)));
             });
         }
-        
+
         this.updateLibraryDisplay();
     }
 
@@ -147,6 +148,7 @@ class LibraryManager {
         const title = song.title || song.name.replace('.kai', '');
         const artist = song.artist || '-';
         const genre = song.genre || '-';
+        const key = song.key || '-';
         const duration = this.formatDuration(song.duration);
         const stems = this.formatStems(song.stems, song.stemCount);
 
@@ -155,6 +157,7 @@ class LibraryManager {
                 <td class="col-title" title="${title}">${title}</td>
                 <td class="col-artist" title="${artist}">${artist}</td>
                 <td class="col-genre" title="${genre}">${genre}</td>
+                <td class="col-key" title="${key}">${key}</td>
                 <td class="col-duration song-duration">${duration}</td>
                 <td class="col-stems song-stems">${stems}</td>
                 <td class="col-actions">
@@ -253,7 +256,7 @@ class LibraryManager {
         const tableBody = document.getElementById('libraryTableBody');
         tableBody.innerHTML = `
             <tr class="library-empty-row">
-                <td colspan="6">
+                <td colspan="7">
                     <div class="library-empty">
                         <div class="empty-message">Scanning library...</div>
                         <div class="empty-detail">Please wait while we extract song metadata</div>
@@ -267,7 +270,7 @@ class LibraryManager {
         const tableBody = document.getElementById('libraryTableBody');
         tableBody.innerHTML = `
             <tr class="library-empty-row">
-                <td colspan="6">
+                <td colspan="7">
                     <div class="library-empty">
                         <div class="empty-icon">🎵</div>
                         <div class="empty-message">${message}</div>
@@ -410,6 +413,8 @@ class LibraryManager {
                     <div class="info-value">${song.year || 'Unknown'}</div>
                     <div class="info-label">Genre:</div>
                     <div class="info-value">${song.genre || 'Unknown'}</div>
+                    <div class="info-label">Key:</div>
+                    <div class="info-value">${song.key || 'Unknown'}</div>
                 </div>
             </div>
 

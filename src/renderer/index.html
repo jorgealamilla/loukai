@@ -38,6 +38,12 @@
                         <label>IEM Output:</label>
                         <select id="iemDeviceSelect"></select>
                     </div>
+                    <div class="device-selector">
+                        <label>
+                            <input type="checkbox" id="iemMonoVocals" checked>
+                            IEM Vocals in Mono (for single earpiece)
+                        </label>
+                    </div>
                 </div>
 
                 <div class="section">
@@ -150,6 +156,7 @@
                                                 <th class="col-title">Title</th>
                                                 <th class="col-artist">Artist</th>
                                                 <th class="col-genre">Genre</th>
+                                                <th class="col-key">Key</th>
                                                 <th class="col-duration">Duration</th>
                                                 <th class="col-stems">Stems</th>
                                                 <th class="col-actions">Actions</th>
@@ -157,7 +164,7 @@
                                         </thead>
                                         <tbody id="libraryTableBody">
                                             <tr class="library-empty-row">
-                                                <td colspan="6">
+                                                <td colspan="7">
                                                     <div class="library-empty">
                                                         <div class="empty-icon">🎵</div>
                                                         <div class="empty-message">No songs library set</div>
@@ -393,7 +400,7 @@
                                 <h2>Web Server Settings</h2>
                                 <div class="server-status" id="serverStatus">
                                     <span class="status-indicator offline" id="statusIndicator"></span>
-                                    <span id="statusText">Checking...</span>
+                                    <span id="serverStatusText">Checking...</span>
                                 </div>
                             </div>
 

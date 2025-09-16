@@ -1432,6 +1432,7 @@ class KaiPlayerApp {
         title: null,
         artist: null,
         genre: null,
+        key: null,
         duration: null,
         stems: [],
         stemCount: 0
@@ -1467,6 +1468,7 @@ class KaiPlayerApp {
                     metadata.title = songData.song.title || null;
                     metadata.artist = songData.song.artist || null;
                     metadata.genre = songData.song.genre || null;
+                    metadata.key = songData.song.key || null;
                     metadata.duration = songData.song.duration_sec || null;
                   }
                   

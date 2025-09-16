@@ -5,6 +5,13 @@ class PlayerController {
         
         // Initialize karaoke renderer
         this.karaokeRenderer = new KaraokeRenderer('karaokeCanvas');
+
+        // Ensure canvas is properly sized after initialization
+        setTimeout(() => {
+            if (this.karaokeRenderer && this.karaokeRenderer.resizeHandler) {
+                this.karaokeRenderer.resizeHandler();
+            }
+        }, 200);
         
         this.currentTime = document.getElementById('currentTime');
         this.totalTime = document.getElementById('totalTime');

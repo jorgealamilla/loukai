@@ -1974,11 +1974,12 @@ body {
 }
 
 /* Column widths */
-.col-title { width: 30%; }
-.col-artist { width: 20%; }
-.col-genre { width: 15%; }
+.col-title { width: 25%; }
+.col-artist { width: 18%; }
+.col-genre { width: 12%; }
+.col-key { width: 8%; }
 .col-duration { width: 8%; }
-.col-stems { width: 20%; }
+.col-stems { width: 22%; }
 .col-actions { width: 7%; }
 
 .library-empty {

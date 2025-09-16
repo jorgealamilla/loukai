@@ -193,13 +193,27 @@ class KaiPlayerApp {
         document.getElementById('iemDeviceSelect').addEventListener('change', async (e) => {
             const deviceId = e.target.value;
             kaiAPI.audio.setDevice('IEM', parseInt(deviceId));
-            
+
             // Save device preference
             this.saveDevicePreference('IEM', deviceId);
-            
+
             // Also set device on renderer audio engine
             if (this.audioEngine && this.audioEngine.setOutputDevice) {
                 await this.audioEngine.setOutputDevice('IEM', deviceId);
+            }
+        });
+
+        // IEM Mono Vocals toggle
+        document.getElementById('iemMonoVocals').addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            if (this.audioEngine && this.audioEngine.setIEMMonoVocals) {
+                this.audioEngine.setIEMMonoVocals(enabled);
+                console.log(`IEM vocals set to ${enabled ? 'mono' : 'stereo'} mode`);
+            }
+
+            // Save preference
+            if (window.settingsAPI) {
+                window.settingsAPI.setSetting('iemMonoVocals', enabled);
             }
         });
 
@@ -541,18 +555,18 @@ class KaiPlayerApp {
         try {
             const port = await window.kaiAPI.webServer.getPort();
             const statusIndicator = document.getElementById('statusIndicator');
-            const statusText = document.getElementById('statusText');
+            const serverStatusText = document.getElementById('serverStatusText');
             const serverUrl = document.getElementById('serverUrl');
             const openServerBtn = document.getElementById('openServerBtn');
 
             if (port) {
                 statusIndicator.className = 'status-indicator online';
-                statusText.textContent = `Running on port ${port}`;
+                serverStatusText.textContent = `Running on port ${port}`;
                 serverUrl.textContent = `http://localhost:${port}`;
                 openServerBtn.disabled = false;
             } else {
                 statusIndicator.className = 'status-indicator offline';
-                statusText.textContent = 'Not running';
+                serverStatusText.textContent = 'Not running';
                 serverUrl.textContent = 'Not running';
                 openServerBtn.disabled = true;
             }
@@ -1165,6 +1179,13 @@ class KaiPlayerApp {
             const saved = await window.settingsAPI.getDevicePreferences();
             if (saved) {
                 this.devicePreferences = { ...this.devicePreferences, ...saved };
+            }
+
+            // Load and set IEM mono vocals checkbox state
+            const iemMonoVocals = await window.settingsAPI.getSetting('iemMonoVocals', true);
+            const checkbox = document.getElementById('iemMonoVocals');
+            if (checkbox) {
+                checkbox.checked = iemMonoVocals;
             }
         } catch (error) {
             console.warn('Failed to load device preferences:', error);

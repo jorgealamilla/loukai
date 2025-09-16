@@ -104,6 +104,8 @@ class KaraokeRenderer {
             activeColor: '#00BFFF', // Light blue for active lines (easier to read)
             upcomingColor: '#888888', // Gray for upcoming lines
             backupColor: '#DAA520', // Golden color for backup singer lines
+            lyricTransitionDuration: 0.4, // Animation duration in seconds (400ms)
+            lyricTransitionStartBefore: 0.4, // Start animation this many seconds before active (400ms)
             backupActiveColor: '#FFD700', // Brighter gold when active
             backgroundColor: '#1a1a1a',
             shadowColor: '#000000',
@@ -116,7 +118,7 @@ class KaraokeRenderer {
             
             // Backup singer animation settings
             backupFadeDuration: 0.8, // seconds to fade in/out
-            backupMaxAlpha: 0.7, // maximum opacity for backup singers (translucent)
+            backupMaxAlpha: 0.6, // maximum opacity for backup singers (60%)
             backupMinAlpha: 0.0, // minimum opacity (fully transparent)
             backupAnimationEasing: 'ease-out', // animation curve
             
@@ -263,10 +265,17 @@ class KaraokeRenderer {
         const resizeCanvas = () => {
             const container = this.canvas.parentElement;
             if (!container) return;
-            
+
             const containerRect = container.getBoundingClientRect();
             const containerWidth = containerRect.width;
             const containerHeight = containerRect.height;
+
+            // Skip if container has no dimensions yet
+            if (containerWidth === 0 || containerHeight === 0) {
+                // Schedule another attempt after DOM settles
+                setTimeout(() => resizeCanvas(), 100);
+                return;
+            }
             
             // 16:9 aspect ratio (1920/1080 = 1.7777...)
             const aspectRatio = 16 / 9;
@@ -292,10 +301,14 @@ class KaraokeRenderer {
         
         // Initial resize
         resizeCanvas();
-        
+
+        // Double-check sizing after DOM fully settles
+        setTimeout(() => resizeCanvas(), 100);
+        requestAnimationFrame(() => resizeCanvas());
+
         // Resize on window resize
         window.addEventListener('resize', resizeCanvas);
-        
+
         // Store reference to remove listener on destroy
         this.resizeHandler = resizeCanvas;
     }
@@ -1409,7 +1422,7 @@ class KaraokeRenderer {
             this.drawInstrumentalIntro(width, height);
             return;
         }
-        
+
         // Check for instrumental outro (just show clean ending, no progress bar)
         if (this.isInInstrumentalOutro()) {
             this.drawInstrumentalOutro(width, height);
@@ -1418,11 +1431,11 @@ class KaraokeRenderer {
         
         // Find current line
         const currentLineIndex = this.findCurrentLine();
-        
+
         if (currentLineIndex >= 0 && currentLineIndex < this.lyrics.length) {
             // Check if we're in an instrumental gap first
             const isInInstrumentalGap = this.isInInstrumentalGap(currentLineIndex);
-            
+
             if (isInInstrumentalGap) {
                 // During instrumental sections, only show the progress bar and upcoming lyrics
                 this.drawInstrumentalProgressBar(currentLineIndex, width, height);
@@ -1565,9 +1578,9 @@ class KaraokeRenderer {
         }
     }
     
-    drawActiveLines(canvasWidth, canvasHeight) {
+    drawActiveLines(canvasWidth, canvasHeight, skipUpcoming = false) {
         if (!this.lyrics) return;
-        
+
         // Update backup singer animations first
         this.updateBackupAnimations();
         
@@ -1590,7 +1603,7 @@ class KaraokeRenderer {
         const totalLines = Math.max(1, mainLines.length + backupLines.length); // At least 1 for spacing calculation
         const lineSpacing = this.settings.lineHeight * 1.2;
         const totalHeight = totalLines * lineSpacing;
-        let currentY = (canvasHeight / 2) - (totalHeight / 2) + lineSpacing - 120; // Move up by 120 pixels for more room below
+        let currentY = (canvasHeight / 2) - (totalHeight / 2) + lineSpacing - 180; // Move up by 180 pixels for more room below
         
         // Draw main singer lines
         mainLines.forEach(line => {
@@ -1626,25 +1639,29 @@ class KaraokeRenderer {
             }
         }
         
-        // Draw upcoming lyrics if enabled (positioned dynamically after current lyrics) 
-        if (this.waveformPreferences.showUpcomingLyrics) {
+        // Draw upcoming lyrics if enabled and not skipped (positioned dynamically after current lyrics)
+        if (!skipUpcoming && this.waveformPreferences.showUpcomingLyrics) {
             this.drawUpcomingLyrics(canvasWidth, canvasHeight, upcomingY);
         }
     }
     
     drawSingleLine(line, canvasWidth, yPosition, isBackup, alpha = 1.0) {
-        // Set up font
-        this.ctx.font = `${this.settings.fontSize}px ${this.settings.fontFamily}`;
+        // Set up font (italic for backup singers)
+        if (isBackup) {
+            this.ctx.font = `italic ${this.settings.fontSize}px ${this.settings.fontFamily}`;
+        } else {
+            this.ctx.font = `${this.settings.fontSize}px ${this.settings.fontFamily}`;
+        }
         this.ctx.textAlign = 'center';
-        
+
         // Save context for alpha manipulation
         this.ctx.save();
-        
+
         // Apply alpha for backup singers
         if (isBackup) {
             this.ctx.globalAlpha = alpha;
         }
-        
+
         // Choose colors based on singer type
         this.ctx.fillStyle = isBackup ? this.settings.backupActiveColor : this.settings.activeColor;
         
@@ -1902,22 +1919,76 @@ class KaraokeRenderer {
 
     isInInstrumentalGap(currentLineIndex) {
         if (!this.lyrics || currentLineIndex < 0) return false;
-        
+
         const now = this.currentTime;
         const currentLine = this.lyrics[currentLineIndex];
-        const nextLine = this.lyrics[currentLineIndex + 1];
-        
-        if (!currentLine || !nextLine) return false;
-        
+
+        // Find the NEXT MAIN SINGER line (skip backup singers)
+        let nextMainLine = null;
+        for (let i = currentLineIndex + 1; i < this.lyrics.length; i++) {
+            if (!this.lyrics[i].isBackup && !this.lyrics[i].isDisabled) {
+                nextMainLine = this.lyrics[i];
+                break;
+            }
+        }
+
+        if (!currentLine || !nextMainLine) return false;
+
         const currentLineEnd = currentLine.endTime;
-        const nextLineStart = nextLine.startTime;
+        const nextLineStart = nextMainLine.startTime;
         const gapDuration = nextLineStart - currentLineEnd;
-        
+
         // Only consider it an instrumental gap if it's longer than 5 seconds
         if (gapDuration <= 5) return false;
-        
-        // Check if we're currently in the gap
+
+        // Check if we're currently in the gap between main singers
         return now >= currentLineEnd && now <= nextLineStart;
+    }
+
+    isInMainSingerInstrumentalGap() {
+        if (!this.lyrics) return { isInGap: false };
+
+        const now = this.currentTime;
+
+        // Find the last main singer line that has ended
+        let lastMainLine = null;
+        let lastMainLineIndex = -1;
+        for (let i = 0; i < this.lyrics.length; i++) {
+            const line = this.lyrics[i];
+            if (!line.isBackup && !line.isDisabled && now >= line.endTime) {
+                lastMainLine = line;
+                lastMainLineIndex = i;
+            }
+        }
+
+        if (!lastMainLine) return { isInGap: false };
+
+        // Find the next main singer line that hasn't started yet
+        let nextMainLine = null;
+        for (let i = lastMainLineIndex + 1; i < this.lyrics.length; i++) {
+            const line = this.lyrics[i];
+            if (!line.isBackup && !line.isDisabled && now < line.startTime) {
+                nextMainLine = line;
+                break;
+            }
+        }
+
+        if (!nextMainLine) return { isInGap: false };
+
+        const gapDuration = nextMainLine.startTime - lastMainLine.endTime;
+
+        // Only consider it an instrumental gap if it's longer than 5 seconds
+        if (gapDuration <= 5) return { isInGap: false };
+
+        // Check if we're currently in the gap between main singers
+        const isInGap = now >= lastMainLine.endTime && now <= nextMainLine.startTime;
+
+        return {
+            isInGap,
+            lastMainLineIndex,
+            nextMainLine,
+            gapProgress: isInGap ? (now - lastMainLine.endTime) / gapDuration : 0
+        };
     }
     
     drawInstrumentalProgressBar(currentLineIndex, canvasWidth, canvasHeight) {
@@ -1962,6 +2033,9 @@ class KaraokeRenderer {
             
             // Draw upcoming lyrics preview below progress bar with proper spacing
             this.drawUpcomingLyricsPreview(nextMainLine, canvasWidth, canvasHeight, gapProgress, barY + this.settings.progressBarMargin);
+
+            // Draw any active backup singers during the instrumental gap (but skip upcoming lyrics since we already showed them)
+            this.drawActiveLines(canvasWidth, canvasHeight, true); // true = skip upcoming lyrics
         }
     }
     
@@ -2071,8 +2145,8 @@ class KaraokeRenderer {
         
         if (!text || text.trim() === '') return;
         
-        // Set font for upcoming lyrics (smaller than current line)
-        this.ctx.font = `${Math.floor(this.settings.fontSize * 0.7)}px ${this.settings.fontFamily}`;
+        // Set font for upcoming lyrics (same size as current line)
+        this.ctx.font = `${this.settings.fontSize}px ${this.settings.fontFamily}`;
         this.ctx.textAlign = 'center';
         
         // Determine color based on readiness
@@ -2106,11 +2180,10 @@ class KaraokeRenderer {
             lines.push(currentLine);
         }
         
-        // Draw each line
-        const lineSpacing = Math.floor(this.settings.fontSize * 0.6);
-        const totalHeight = lines.length * lineSpacing;
-        let currentY = startY - (totalHeight / 2) + lineSpacing;
-        
+        // Draw each line below the progress bar (consistent with other functions)
+        const lineSpacing = this.settings.lineHeight * 0.8;
+        let currentY = startY + 60; // Start below the progress bar with some padding
+
         lines.forEach(line => {
             this.drawTextWithBackground(line, canvasWidth / 2, currentY);
             currentY += lineSpacing;
@@ -2454,12 +2527,12 @@ class KaraokeRenderer {
         
         // Draw the locked upcoming lyric
         this.ctx.save();
-        this.ctx.font = `${this.settings.fontSize * 0.85}px ${this.settings.fontFamily}`;
+        this.ctx.font = `${this.settings.fontSize}px ${this.settings.fontFamily}`;
         this.ctx.textAlign = 'center';
-        this.ctx.fillStyle = '#999999'; 
+        this.ctx.fillStyle = '#999999';
         this.ctx.globalAlpha = 0.8;
         
-        let currentY = startY - 10;
+        let currentY = startY;
         
         // Get text from line
         let text = '';
@@ -2470,7 +2543,7 @@ class KaraokeRenderer {
         }
         
         if (text) {
-            this.drawWrappedText(text, canvasWidth / 2, currentY, canvasWidth * 0.8);
+            this.drawWrappedText(text, canvasWidth / 2, currentY, canvasWidth * 0.9);
         }
         
         this.ctx.restore();
@@ -2480,7 +2553,7 @@ class KaraokeRenderer {
         const words = text.split(' ');
         let currentLine = '';
         let linesRendered = 0;
-        const lineHeight = this.settings.fontSize * 0.85 * 1.2; // Match font size with some line spacing
+        const lineHeight = this.settings.fontSize * 1.2; // Match font size with some line spacing
         
         for (let i = 0; i < words.length; i++) {
             const testLine = currentLine + (currentLine ? ' ' : '') + words[i];
@@ -2535,11 +2608,11 @@ class KaraokeRenderer {
                     upcomingPosition = currentActiveEndY + 50;
                 }
                 
-                const activePosition = (this.canvas.height / 2) - 60;  // Where active is shown (center)
+                const activePosition = (this.canvas.height / 2) - 180;  // Where active is shown (higher up)
                 
                 this.lyricTransitions.set(upcomingLine.index, {
                     startTime: now,
-                    duration: 0.35, // 350ms animation
+                    duration: this.settings.lyricTransitionDuration,
                     progress: 0,
                     startY: upcomingPosition,  // EXACT position where it was displayed
                     endY: activePosition       // Higher on screen (lower Y value)
@@ -2580,20 +2653,27 @@ class KaraokeRenderer {
             if (upcomingLine) {
                 const timeUntilActive = upcomingLine.startTime - now;
                 
-                // Start animation 250ms before the lyric becomes active
-                if (timeUntilActive <= 0.25 && timeUntilActive > 0) {
+                // Start animation before the lyric becomes active
+                if (timeUntilActive <= this.settings.lyricTransitionStartBefore && timeUntilActive > 0) {
                     // Only start if not already animating
                     if (!this.lyricTransitions.has(this.lockedUpcomingIndex)) {
                         // Calculate active position (same as drawActiveLines)
                         const canvasHeight = this.canvas.height;
                         const lineSpacing = this.settings.lineHeight * 1.2;
-                        const activeY = (canvasHeight / 2) - lineSpacing + lineSpacing - 120;
-                        
+
+                        // Check if there are any current main lines (to calculate proper position)
+                        const currentMainLines = activeLines.filter(line => !line.isBackup);
+                        const totalLines = Math.max(1, currentMainLines.length);
+                        const totalHeight = totalLines * lineSpacing;
+
+                        // This matches the exact calculation in drawActiveLines
+                        const activeY = (canvasHeight / 2) - (totalHeight / 2) + lineSpacing - 180;
+
                         this.lyricTransitions.set(this.lockedUpcomingIndex, {
                             startTime: now,
-                            duration: 0.25,
+                            duration: this.settings.lyricTransitionDuration,
                             progress: 0,
-                            startY: upcomingY - 10, // Where upcoming lyric is drawn
+                            startY: upcomingY, // Where upcoming lyric is drawn (no offset)
                             endY: activeY
                         });
                         
@@ -2629,8 +2709,8 @@ class KaraokeRenderer {
         
         
         // Interpolate color from upcoming grey to active color
-        const startColor = { r: 153, g: 153, b: 153 }; // #999999 (upcoming grey)
-        const endColor = { r: 255, g: 255, b: 255 }; // #ffffff (active white)
+        const startColor = { r: 136, g: 136, b: 136 }; // #888888 (upcoming grey from settings)
+        const endColor = { r: 0, g: 191, b: 255 }; // #00BFFF (active blue from settings)
         
         const r = Math.round(startColor.r + (endColor.r - startColor.r) * transition.progress);
         const g = Math.round(startColor.g + (endColor.g - startColor.g) * transition.progress);
@@ -2654,9 +2734,40 @@ class KaraokeRenderer {
         }
         
         if (text) {
-            this.drawTextWithBackground(text, canvasWidth / 2, currentY);
+            // Handle word wrapping during transition to prevent layout jumps
+            const maxWidth = canvasWidth * 0.9;
+            const words = text.split(' ');
+            const lines = [];
+            let currentLine = '';
+
+            for (const word of words) {
+                const testLine = currentLine ? currentLine + ' ' + word : word;
+                const testWidth = this.ctx.measureText(testLine).width;
+
+                if (testWidth <= maxWidth) {
+                    currentLine = testLine;
+                } else {
+                    if (currentLine) {
+                        lines.push(currentLine);
+                        currentLine = word;
+                    } else {
+                        lines.push(word);
+                    }
+                }
+            }
+
+            if (currentLine) {
+                lines.push(currentLine);
+            }
+
+            // Draw each wrapped line (match drawSingleLine spacing)
+            const lineHeight = this.settings.lineHeight * 0.8;
+            lines.forEach((textLine, index) => {
+                const adjustedY = currentY + (index * lineHeight);
+                this.drawTextWithBackground(textLine, canvasWidth / 2, adjustedY);
+            });
         }
-        
+
         this.ctx.restore();
     }
 }

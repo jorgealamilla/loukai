@@ -53,7 +53,8 @@ class RendererAudioEngine {
                 enabled: false,
                 strength: 50,
                 speed: 5
-            }
+            },
+            iemMonoVocals: true  // Default to mono for single-ear monitoring
         };
     }
 
@@ -102,6 +103,10 @@ class RendererAudioEngine {
                         this.outputDevices.IEM = prefs.IEM.id;
                     }
                 }
+
+                // Load IEM mono vocals setting
+                const iemMonoVocals = await window.settingsAPI.getSetting('iemMonoVocals', true);
+                this.mixerState.iemMonoVocals = iemMonoVocals;
             }
         } catch (error) {
             console.error('Failed to load device preferences:', error);
@@ -368,9 +373,19 @@ class RendererAudioEngine {
             paGainNode.connect(this.outputNodes.PA.masterGain);
             this.outputNodes.PA.gainNodes.set(stem.name, paGainNode);
             
-            // Create gain node for IEM output  
+            // Create gain node for IEM output
             const iemGainNode = this.audioContexts.IEM.createGain();
-            iemGainNode.connect(this.outputNodes.IEM.masterGain);
+
+            // For vocal stems, add mono conversion if enabled
+            if (this.isVocalStem(stem.name) && this.mixerState.iemMonoVocals) {
+                // Create channel merger to convert stereo to mono
+                const channelMerger = this.audioContexts.IEM.createChannelMerger(1);
+                iemGainNode.connect(channelMerger);
+                channelMerger.connect(this.outputNodes.IEM.masterGain);
+            } else {
+                iemGainNode.connect(this.outputNodes.IEM.masterGain);
+            }
+
             this.outputNodes.IEM.gainNodes.set(stem.name, iemGainNode);
             
             this.updateStemGain(stem);
@@ -760,6 +775,22 @@ class RendererAudioEngine {
         if (this.microphoneGain) {
             this.microphoneGain.gain.value = gainValue;
         }
+    }
+
+    setIEMMonoVocals(enabled) {
+        this.mixerState.iemMonoVocals = enabled;
+
+        // If playing, recreate audio graph to apply the change
+        if (this.isPlaying) {
+            this.stopAllSources();
+            this.createAudioGraph();
+            this.startAudioSources();
+        } else {
+            // Just recreate the graph for next playback
+            this.createAudioGraph();
+        }
+
+        return true;
     }
 
     stop() {
