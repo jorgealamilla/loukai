@@ -1367,6 +1367,19 @@ class KaiPlayerApp {
       }
     });
 
+    ipcMain.handle('webServer:refreshCache', async () => {
+      try {
+        if (this.webServer) {
+          await this.webServer.refreshSongsCache();
+          return { success: true };
+        } else {
+          return { error: 'Web server not available' };
+        }
+      } catch (error) {
+        return { error: error.message };
+      }
+    });
+
     // Queue Management
     ipcMain.handle('queue:addSong', async (event, queueItem) => {
       await this.addSongToQueue(queueItem);

@@ -490,17 +490,13 @@ class LibraryManager {
 
     async refreshWebServerCache() {
         try {
-            // Refresh the web server's songs cache by calling the web server directly
-            // This ensures the web UI alphabet navigation and search stay in sync
             console.log('🔄 Refreshing web server cache...');
+            const result = await window.kaiAPI.webServer.refreshCache();
 
-            // Get reference to the main app which has the web server
-            const mainApp = require('@electron/remote').getGlobal('mainApp');
-            if (mainApp && mainApp.webServer) {
-                await mainApp.webServer.refreshSongsCache();
+            if (result.success) {
                 console.log('✅ Web server cache refreshed');
             } else {
-                console.log('⚠️ Web server not available for cache refresh');
+                console.log('⚠️ Failed to refresh web server cache:', result.error);
             }
         } catch (error) {
             console.error('❌ Failed to refresh web server cache:', error);

@@ -83,16 +83,38 @@ class LyricsEditorController {
         // Load lyrics directly into the line-by-line editor
         if (this.lyricsEditor && songData?.lyrics) {
             
-            // Get rejections from song metadata
-            const rejections = songData?.song?.lyric_update_rejections || [];
-            
-            this.lyricsEditor.loadLyrics(songData.lyrics, rejections);
+            // Get rejections from KAI format metadata (meta.corrections.rejected)
+            // Map KAI format to lyrics editor format
+            const kaiRejections = songData?.meta?.corrections?.rejected || [];
+            const rejections = kaiRejections.map(rejection => ({
+                line_num: rejection.line,
+                start_time: rejection.start,
+                end_time: rejection.end,
+                old_text: rejection.old,
+                new_text: rejection.new,
+                reason: rejection.reason,
+                retention_rate: rejection.word_retention,
+                min_required: 0.5 // Default minimum threshold
+            }));
+
+            // Get missing line suggestions from KAI format metadata
+            const kaiSuggestions = songData?.meta?.corrections?.missing_lines_suggested || [];
+            const suggestions = kaiSuggestions.map(suggestion => ({
+                suggested_text: suggestion.suggested_text,
+                start_time: suggestion.start,
+                end_time: suggestion.end,
+                confidence: suggestion.confidence,
+                reason: suggestion.reason,
+                pitch_activity: suggestion.pitch_activity
+            }));
+
+            this.lyricsEditor.loadLyrics(songData.lyrics, rejections, suggestions);
             
             // Set up callback to update karaoke renderer when lyrics are edited
             // Only set this up once to avoid duplicate callbacks
             if (!this.callbackSetup) {
-                this.lyricsEditor.onLyricsEdited((editedLyrics, editedRejections) => {
-                    this.onLyricsEdited(editedLyrics, editedRejections);
+                this.lyricsEditor.onLyricsEdited((editedLyrics, editedRejections, editedSuggestions) => {
+                    this.onLyricsEdited(editedLyrics, editedRejections, editedSuggestions);
                 });
                 this.callbackSetup = true;
             }
@@ -237,15 +259,40 @@ class LyricsEditorController {
         // Enable controls - line-by-line editor is always enabled when song is loaded
     }
 
-    onLyricsEdited(editedLyrics, editedRejections = []) {
+    onLyricsEdited(editedLyrics, editedRejections = [], editedSuggestions = []) {
         // Update the karaoke renderer with edited lyrics
         
         // Update the current song data with edited lyrics and rejections
         this.currentSong.lyrics = editedLyrics;
-        if (!this.currentSong.song) {
-            this.currentSong.song = {};
+
+        // Map rejections back to KAI format and store in meta.corrections.rejected
+        if (!this.currentSong.meta) {
+            this.currentSong.meta = {};
         }
-        this.currentSong.song.lyric_update_rejections = editedRejections;
+        if (!this.currentSong.meta.corrections) {
+            this.currentSong.meta.corrections = {};
+        }
+
+        // Convert from lyrics editor format back to KAI format
+        this.currentSong.meta.corrections.rejected = editedRejections.map(rejection => ({
+            line: rejection.line_num,
+            start: rejection.start_time,
+            end: rejection.end_time,
+            old: rejection.old_text,
+            new: rejection.new_text,
+            reason: rejection.reason,
+            word_retention: rejection.retention_rate
+        }));
+
+        // Convert suggestions back to KAI format
+        this.currentSong.meta.corrections.missing_lines_suggested = editedSuggestions.map(suggestion => ({
+            suggested_text: suggestion.suggested_text,
+            start: suggestion.start_time,
+            end: suggestion.end_time,
+            confidence: suggestion.confidence,
+            reason: suggestion.reason,
+            pitch_activity: suggestion.pitch_activity
+        }));
         
         // Find the player instance through the main app and update karaoke renderer
         if (window.appInstance && window.appInstance.player && window.appInstance.player.karaokeRenderer) {

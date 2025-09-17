@@ -3,6 +3,7 @@ class LyricsEditor {
         this.lyricsData = [];
         this.originalLyrics = null;
         this.rejections = [];
+        this.suggestions = [];
         this.editedCallback = null;
         
         this.lyricsLinesContainer = document.getElementById('lyricsLines');
@@ -21,10 +22,11 @@ class LyricsEditor {
         }
     }
     
-    loadLyrics(lyrics, rejections = []) {
+    loadLyrics(lyrics, rejections = [], suggestions = []) {
         this.originalLyrics = JSON.parse(JSON.stringify(lyrics));
         this.lyricsData = JSON.parse(JSON.stringify(lyrics));
         this.rejections = JSON.parse(JSON.stringify(rejections));
+        this.suggestions = JSON.parse(JSON.stringify(suggestions));
         this.renderEditor();
     }
     
@@ -58,6 +60,26 @@ class LyricsEditor {
                 lineNum: rejection.line_num
             });
         });
+
+        // Add suggestions
+        this.suggestions.forEach((suggestion, suggestionIndex) => {
+            // Find the best insertion point based on timing
+            let insertAfterLine = 0;
+            for (let i = 0; i < this.lyricsData.length; i++) {
+                const line = this.lyricsData[i];
+                const lineStart = typeof line === 'object' ? (line.start || line.time || line.start_time || 0) : i * 3;
+                if (lineStart < suggestion.start_time) {
+                    insertAfterLine = i + 1;
+                }
+            }
+
+            items.push({
+                type: 'suggestion',
+                data: suggestion,
+                suggestionIndex: suggestionIndex,
+                lineNum: insertAfterLine + 0.5 // Insert between existing lines
+            });
+        });
         
         // Sort by line number
         items.sort((a, b) => {
@@ -73,9 +95,12 @@ class LyricsEditor {
             if (item.type === 'lyric') {
                 const lineElement = this.createLineEditor(item.data, item.index);
                 this.lyricsLinesContainer.appendChild(lineElement);
-            } else {
+            } else if (item.type === 'rejection') {
                 const rejectionElement = this.createRejectionBox(item.data, item.rejectionIndex);
                 this.lyricsLinesContainer.appendChild(rejectionElement);
+            } else if (item.type === 'suggestion') {
+                const suggestionElement = this.createSuggestionBox(item.data, item.suggestionIndex);
+                this.lyricsLinesContainer.appendChild(suggestionElement);
             }
         });
     }
@@ -275,7 +300,73 @@ class LyricsEditor {
         
         return container;
     }
-    
+
+    createSuggestionBox(suggestion, suggestionIndex) {
+        const container = document.createElement('div');
+        container.className = 'lyric-suggestion-box';
+        container.dataset.suggestionIndex = suggestionIndex;
+
+        // Format timing display
+        const startTime = this.formatTime(suggestion.start_time);
+        const endTime = this.formatTime(suggestion.end_time);
+
+        container.innerHTML = `
+            <div class="suggestion-header">
+                <span class="suggestion-label">💡 Suggested Missing Line (${startTime} - ${endTime})</span>
+                <button class="suggestion-delete-btn" title="Delete this suggestion">🗑️</button>
+            </div>
+            <div class="suggestion-content">
+                <div class="suggestion-text-display">
+                    <label>Suggested Text:</label>
+                    <div class="suggested-text-content">${suggestion.suggested_text}</div>
+                </div>
+                <div class="suggestion-details">
+                    <span class="suggestion-confidence">Confidence: ${suggestion.confidence}</span>
+                    <span class="suggestion-reason">Reason: ${suggestion.reason}</span>
+                    ${suggestion.pitch_activity ?
+                        `<span class="suggestion-pitch">Pitch Activity: ${suggestion.pitch_activity}</span>` :
+                        ''}
+                </div>
+                <div class="suggestion-actions">
+                    <button class="accept-suggestion-btn" title="Add this as a new lyric line">✅ Add as New Line</button>
+                    <button class="copy-suggestion-btn" title="Copy suggested text">📋 Copy Text</button>
+                </div>
+            </div>
+        `;
+
+        // Add delete functionality
+        const deleteBtn = container.querySelector('.suggestion-delete-btn');
+        deleteBtn.addEventListener('click', () => {
+            this.deleteSuggestion(suggestionIndex);
+        });
+
+        // Add copy functionality
+        const copyBtn = container.querySelector('.copy-suggestion-btn');
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(suggestion.suggested_text);
+                copyBtn.textContent = '✅ Copied';
+                setTimeout(() => {
+                    copyBtn.textContent = '📋 Copy Text';
+                }, 2000);
+            } catch (error) {
+                console.error('Failed to copy text:', error);
+                copyBtn.textContent = '❌ Failed';
+                setTimeout(() => {
+                    copyBtn.textContent = '📋 Copy Text';
+                }, 2000);
+            }
+        });
+
+        // Add accept functionality
+        const acceptBtn = container.querySelector('.accept-suggestion-btn');
+        acceptBtn.addEventListener('click', () => {
+            this.acceptSuggestion(suggestionIndex);
+        });
+
+        return container;
+    }
+
     deleteRejection(rejectionIndex) {
         this.rejections.splice(rejectionIndex, 1);
         this.renderEditor();
@@ -286,21 +377,52 @@ class LyricsEditor {
         const rejection = this.rejections[rejectionIndex];
         if (!rejection) return;
 
-        // Find the lyric line to update (line numbers are 1-based, array indices are 0-based)
-        const lineIndex = rejection.line_num - 1;
+        // Find the lyric line to update by matching timing, not just line number
+        // This ensures we replace the correct lyric even if line numbers have shifted
+        let targetLineIndex = -1;
 
-        if (lineIndex >= 0 && lineIndex < this.lyricsData.length) {
+        for (let i = 0; i < this.lyricsData.length; i++) {
+            const line = this.lyricsData[i];
+            if (typeof line === 'object' && line !== null) {
+                const lineStart = line.start || line.time || line.start_time || 0;
+                const lineEnd = line.end || line.end_time || 0;
+
+                // Check if timing matches the rejection's expected timing
+                if (rejection.start_time !== undefined && rejection.end_time !== undefined) {
+                    // Match by exact timing if available in rejection
+                    if (Math.abs(lineStart - rejection.start_time) < 0.1 &&
+                        Math.abs(lineEnd - rejection.end_time) < 0.1) {
+                        targetLineIndex = i;
+                        break;
+                    }
+                } else if (rejection.old_text && line.text === rejection.old_text) {
+                    // Fallback: match by old text content if timing not available
+                    targetLineIndex = i;
+                    break;
+                }
+            }
+        }
+
+        // If no timing match found, fallback to line number approach
+        if (targetLineIndex === -1) {
+            const lineIndex = rejection.line_num - 1;
+            if (lineIndex >= 0 && lineIndex < this.lyricsData.length) {
+                targetLineIndex = lineIndex;
+            }
+        }
+
+        if (targetLineIndex >= 0 && targetLineIndex < this.lyricsData.length) {
             // Update the lyric text with the proposed text
-            if (typeof this.lyricsData[lineIndex] === 'string') {
+            if (typeof this.lyricsData[targetLineIndex] === 'string') {
                 // Convert string to object format if needed
-                this.lyricsData[lineIndex] = {
+                this.lyricsData[targetLineIndex] = {
                     text: rejection.new_text,
-                    start: lineIndex * 3,
-                    end: (lineIndex * 3) + 3
+                    start: targetLineIndex * 3,
+                    end: (targetLineIndex * 3) + 3
                 };
             } else {
-                // Update existing object
-                this.lyricsData[lineIndex].text = rejection.new_text;
+                // Update existing object, preserving timing
+                this.lyricsData[targetLineIndex].text = rejection.new_text;
             }
 
             // Remove the rejection from the list
@@ -309,9 +431,52 @@ class LyricsEditor {
             // Re-render and notify of changes
             this.renderEditor();
             this.notifyChange();
+        } else {
+            console.error('Could not find matching lyric line for rejection:', rejection);
         }
     }
-    
+
+    deleteSuggestion(suggestionIndex) {
+        this.suggestions.splice(suggestionIndex, 1);
+        this.renderEditor();
+        this.notifyChange();
+    }
+
+    acceptSuggestion(suggestionIndex) {
+        const suggestion = this.suggestions[suggestionIndex];
+        if (!suggestion) return;
+
+        // Find the best insertion point based on timing
+        let insertionIndex = this.lyricsData.length; // Default to end
+
+        for (let i = 0; i < this.lyricsData.length; i++) {
+            const line = this.lyricsData[i];
+            const lineStart = typeof line === 'object' ? (line.start || line.time || line.start_time || 0) : i * 3;
+
+            if (suggestion.start_time < lineStart) {
+                insertionIndex = i;
+                break;
+            }
+        }
+
+        // Create new lyric line from suggestion
+        const newLine = {
+            start: suggestion.start_time,
+            end: suggestion.end_time,
+            text: suggestion.suggested_text
+        };
+
+        // Insert the new line at the correct position
+        this.lyricsData.splice(insertionIndex, 0, newLine);
+
+        // Remove the suggestion from the list
+        this.suggestions.splice(suggestionIndex, 1);
+
+        // Re-render and notify of changes
+        this.renderEditor();
+        this.notifyChange();
+    }
+
     updateLineData(index, property, value) {
         if (this.lyricsData[index]) {
             if (typeof this.lyricsData[index] === 'string') {
@@ -416,7 +581,7 @@ class LyricsEditor {
     
     notifyChange() {
         if (this.editedCallback) {
-            this.editedCallback(this.getEditedLyrics(), this.rejections);
+            this.editedCallback(this.getEditedLyrics(), this.rejections, this.suggestions);
         }
     }
     

@@ -86,7 +86,8 @@ const api = {
     updateSettings: (settings) => ipcRenderer.invoke('webServer:updateSettings', settings),
     getSongRequests: () => ipcRenderer.invoke('webServer:getSongRequests'),
     approveRequest: (requestId) => ipcRenderer.invoke('webServer:approveRequest', requestId),
-    rejectRequest: (requestId) => ipcRenderer.invoke('webServer:rejectRequest', requestId)
+    rejectRequest: (requestId) => ipcRenderer.invoke('webServer:rejectRequest', requestId),
+    refreshCache: () => ipcRenderer.invoke('webServer:refreshCache')
   },
 
   settings: {
