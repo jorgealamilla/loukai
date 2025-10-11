@@ -27,6 +27,12 @@ export function PlayerControls({
   // Derive loading state from currentSong if not explicitly provided
   const loading = isLoading !== undefined ? isLoading : currentSong?.isLoading || false;
 
+  // Truncate effect name to 28 characters with ellipsis
+  const truncateEffectName = (name) => {
+    if (!name || name === 'No Effect') return name;
+    return name.length > 28 ? name.substring(0, 28) + '…' : name;
+  };
+
   const handleProgressClick = (e) => {
     if (!duration || !onSeek) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -122,8 +128,11 @@ export function PlayerControls({
             </span>
           </button>
         )}
-        <span className="px-3 py-1 bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium min-w-[120px] text-center">
-          {currentEffect || 'No Effect'}
+        <span
+          className="px-3 py-1 bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium min-w-[120px] text-center"
+          title={currentEffect || 'No Effect'}
+        >
+          {truncateEffectName(currentEffect || 'No Effect')}
         </span>
         {onNextEffect && (
           <button
