@@ -5,9 +5,11 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![React 19](https://img.shields.io/badge/React-19-blue)](https://react.dev/)
 [![Electron 38](https://img.shields.io/badge/Electron-38-blue)](https://www.electronjs.org/)
-[![Test Coverage](https://img.shields.io/badge/coverage-52%25-green)](./PHASE2-SUMMARY.md)
+[![Test Coverage](https://img.shields.io/badge/coverage-52%25-green)](./docs/PHASE2-SUMMARY.md)
 
 Loukai is a cross-platform karaoke application built with Electron that supports multiple file formats (KAI, CDG, MP3+CDG pairs), real-time stem mixing, dual audio outputs, visual effects, and a web-based admin interface for remote control and song requests.
+
+![Loukai Application](./Loukai_app.png)
 
 ---
 
@@ -72,7 +74,7 @@ Loukai is a cross-platform karaoke application built with Electron that supports
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/kai-player.git
+git clone https://github.com/monteslu/kai-player.git
 cd kai-player
 
 # Install dependencies
@@ -325,7 +327,7 @@ npm run test:ui
 
 **Current Coverage:** 52% (84 tests)
 
-See [PHASE2-SUMMARY.md](./PHASE2-SUMMARY.md) for detailed testing information.
+See [PHASE2-SUMMARY.md](./docs/PHASE2-SUMMARY.md) for detailed testing information.
 
 ---
 
@@ -417,8 +419,10 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines.
 | Document | Description |
 |----------|-------------|
 | [KAI-Play-Spec-v1.0.md](./docs/KAI-Play-Spec-v1.0.md) | Player specification |
-| [PHASE2-SUMMARY.md](./PHASE2-SUMMARY.md) | Testing infrastructure guide |
-| [MODERNIZATION-PLAN.md](./MODERNIZATION-PLAN.md) | Development roadmap |
+| [architecture.md](./docs/architecture.md) | System architecture and design |
+| [PHASE2-SUMMARY.md](./docs/PHASE2-SUMMARY.md) | Testing infrastructure guide |
+| [MODERNIZATION-PLAN.md](./docs/MODERNIZATION-PLAN.md) | Development roadmap |
+| [PACKAGING.md](./PACKAGING.md) | Build and packaging guide |
 | [WEB-API-REFERENCE.md](./docs/wip/WEB-API-REFERENCE.md) | REST API documentation |
 | [SECURITY-MODEL.md](./docs/wip/SECURITY-MODEL.md) | Security architecture |
 | [REFACTORING-SUMMARY.md](./docs/wip/REFACTORING-SUMMARY.md) | Architecture decisions |
@@ -480,8 +484,8 @@ See [LICENSE](./LICENSE) for full text.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/kai-player/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/kai-player/discussions)
+- **Issues**: [GitHub Issues](https://github.com/monteslu/kai-player/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/monteslu/kai-player/discussions)
 - **Documentation**: [docs/](./docs/)
 
 ---
