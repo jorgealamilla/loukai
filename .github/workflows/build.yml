@@ -43,15 +43,20 @@ jobs:
           restore-keys: |
             flatpak-runtime-24.08-
 
-      - name: Install Flatpak runtimes (x64 only)
+      - name: Install Flatpak runtimes
         if: steps.flatpak-cache.outputs.cache-hit != 'true'
         run: |
           flatpak install --user -y flathub org.electronjs.Electron2.BaseApp/x86_64/24.08 org.freedesktop.Platform/x86_64/24.08 org.freedesktop.Sdk/x86_64/24.08
+          flatpak install --user -y flathub org.electronjs.Electron2.BaseApp/aarch64/24.08 org.freedesktop.Platform/aarch64/24.08 org.freedesktop.Sdk/aarch64/24.08
 
       - name: Build web UI
         run: npm run build:web
 
-      - name: Build Linux (x64 only)
+      - name: Install QEMU for arm64
+        run: |
+          sudo apt-get install -y qemu-user-static
+
+      - name: Build Linux (x64 + arm64)
         run: npm run build:linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

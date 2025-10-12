@@ -1,6 +1,6 @@
 {
   "name": "loukai",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "type": "module",
   "description": "Loukai - Real-time karaoke player with stem control and coaching",
   "main": "src/main/main.js",
@@ -108,13 +108,15 @@
         {
           "target": "AppImage",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         },
         {
           "target": "flatpak",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         }
       ],
