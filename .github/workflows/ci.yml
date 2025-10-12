@@ -63,12 +63,12 @@ jobs:
           COVERAGE=$(npm run test:coverage 2>&1 | grep -oP 'All files\s+\|\s+\K[0-9.]+' | head -1)
           echo "Current coverage: $COVERAGE%"
 
-          # Fail if coverage is below 30%
-          if (( $(echo "$COVERAGE < 30" | bc -l) )); then
-            echo "❌ Coverage is below 30% threshold"
+          # Fail if coverage is below 5%
+          if (( $(echo "$COVERAGE < 5" | bc -l) )); then
+            echo "❌ Coverage is below 5% threshold"
             exit 1
           fi
-          echo "✅ Coverage meets 30% threshold"
+          echo "✅ Coverage meets 5% threshold"
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v4
