@@ -30,7 +30,7 @@
   <screenshots>
     <screenshot type="default">
       <caption>Loukai karaoke player with library, queue, and mixer controls</caption>
-      <image>https://raw.githubusercontent.com/monteslu/kai-player/main/Loukai_app.png</image>
+      <image>com.loukai.app.png</image>
     </screenshot>
   </screenshots>
 
@@ -47,7 +47,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="0.1.17" date="2025-10-12">
+    <release version="0.1.22" date="2025-10-12">
+      <description>
+        <p>UI improvements</p>
+        <ul>
+          <li>Improved lyric editor: clicking text field now selects the row</li>
+          <li>Enhanced selection visibility with better color contrast</li>
+          <li>Text inputs now more clearly editable</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.21" date="2025-10-12">
       <description>
         <p>Early development release with core karaoke features</p>
         <ul>
