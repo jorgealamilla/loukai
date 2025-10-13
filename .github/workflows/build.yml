@@ -10,8 +10,11 @@ permissions:
   contents: write
 
 jobs:
-  build-linux:
+  build-linux-x64:
     runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
 
     steps:
       - name: Checkout code
@@ -21,53 +24,96 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Install flatpak-builder
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak-builder flatpak
-          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+      - name: Build web UI
+        run: npm run build:web
 
-      # Cache Flatpak runtimes to avoid 2-3 GB download on every build
-      - name: Cache Flatpak runtimes
-        uses: actions/cache@v4
-        id: flatpak-cache
+      - name: Setup Flatpak remotes and Electron base
+        run: |
+          echo "Adding Flathub remote..."
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          echo "Installing Electron base app (x64)..."
+          flatpak install -y flathub org.electronjs.Electron2.BaseApp/x86_64/24.08
+
+      - name: Build Linux x64 AppImage
+        run: npx electron-builder --linux AppImage --x64 && node scripts/rename-artifacts.js
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Linux x64 Flatpak
+        run: npx electron-builder --linux flatpak --x64 && node scripts/rename-artifacts.js
+        timeout-minutes: 45
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux x64 artifacts
+        uses: actions/upload-artifact@v4
         with:
+          name: linux-x64-builds
           path: |
-            ~/.local/share/flatpak
-          key: flatpak-runtime-24.08-v2
-          restore-keys: |
-            flatpak-runtime-24.08-
+            dist/*.AppImage
+            dist/*.flatpak
+          if-no-files-found: warn
+          retention-days: 7
 
-      - name: Install Flatpak runtimes
-        if: steps.flatpak-cache.outputs.cache-hit != 'true'
+  build-linux-arm64:
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install QEMU for ARM64 builds
         run: |
-          flatpak install --user -y flathub org.electronjs.Electron2.BaseApp/x86_64/24.08 org.freedesktop.Platform/x86_64/24.08 org.freedesktop.Sdk/x86_64/24.08
-          flatpak install --user -y flathub org.electronjs.Electron2.BaseApp/aarch64/24.08 org.freedesktop.Platform/aarch64/24.08 org.freedesktop.Sdk/aarch64/24.08
+          dnf install -y qemu-user-static
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Build web UI
         run: npm run build:web
 
-      - name: Install QEMU for arm64
+      - name: Setup Flatpak remotes and Electron base
         run: |
-          sudo apt-get install -y qemu-user-static
+          echo "Adding Flathub remote..."
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          echo "Installing arm64 Platform runtime..."
+          flatpak install -y flathub org.freedesktop.Platform/aarch64/24.08 || echo "Platform already installed"
+          echo "Installing arm64 SDK..."
+          flatpak install -y flathub org.freedesktop.Sdk/aarch64/24.08
+          echo "Installing Electron base app (arm64)..."
+          flatpak install -y flathub org.electronjs.Electron2.BaseApp/aarch64/24.08
 
-      - name: Build Linux (x64 + arm64)
-        run: npm run build:linux
+      - name: Build Linux arm64 AppImage
+        run: npx electron-builder --linux AppImage --arm64 && node scripts/rename-artifacts.js
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload artifacts
+      - name: Build Linux arm64 Flatpak
+        run: npx electron-builder --linux flatpak --arm64 && node scripts/rename-artifacts.js
+        timeout-minutes: 45
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux arm64 artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-builds
+          name: linux-arm64-builds
           path: |
             dist/*.AppImage
             dist/*.flatpak
+          if-no-files-found: warn
           retention-days: 7
 
   build-windows:
@@ -133,7 +179,7 @@ jobs:
           retention-days: 7
 
   release:
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux-x64, build-linux-arm64, build-windows, build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
 
@@ -147,7 +193,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/linux-builds/*
+            artifacts/linux-x64-builds/*
+            artifacts/linux-arm64-builds/*
             artifacts/windows-builds/*
             artifacts/macos-builds/*
           draft: false
