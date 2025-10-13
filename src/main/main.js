@@ -203,7 +203,7 @@ class KaiPlayerApp {
     this.mainWindow.loadFile(rendererPath);
 
     // Set dock icon on macOS
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' && fs.existsSync(iconPath)) {
       app.dock?.setIcon(iconPath);
     }
 
