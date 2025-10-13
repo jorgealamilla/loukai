@@ -17,7 +17,10 @@ import * as queueService from '../shared/services/queueService.js';
 import * as libraryService from '../shared/services/libraryService.js';
 import * as playerService from '../shared/services/playerService.js';
 import * as serverSettingsService from '../shared/services/serverSettingsService.js';
+
+console.log('📦 About to import registerAllHandlers...');
 import { registerAllHandlers } from './handlers/index.js';
+console.log('✅ registerAllHandlers imported:', typeof registerAllHandlers);
 
 // ESM equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
