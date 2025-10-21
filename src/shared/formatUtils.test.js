@@ -7,8 +7,12 @@ import { getFormatIcon, formatDuration, formatTime, formatFileSize } from './for
 
 describe('formatUtils', () => {
   describe('getFormatIcon', () => {
-    it('should return lightning icon for kai format', () => {
-      expect(getFormatIcon('kai')).toBe('⚡');
+    it('should return package icon for kai format', () => {
+      expect(getFormatIcon('kai')).toBe('📦');
+    });
+
+    it('should return lightning icon for m4a-stems format', () => {
+      expect(getFormatIcon('m4a-stems')).toBe('⚡');
     });
 
     it('should return disc icon for cdg-archive format', () => {
@@ -19,15 +23,15 @@ describe('formatUtils', () => {
       expect(getFormatIcon('cdg-pair')).toBe('💿');
     });
 
-    it('should return default lightning icon for unknown format', () => {
-      expect(getFormatIcon('unknown')).toBe('⚡');
-      expect(getFormatIcon('mp3')).toBe('⚡');
-      expect(getFormatIcon('')).toBe('⚡');
+    it('should return default music icon for unknown format', () => {
+      expect(getFormatIcon('unknown')).toBe('🎵');
+      expect(getFormatIcon('mp3')).toBe('🎵');
+      expect(getFormatIcon('')).toBe('🎵');
     });
 
     it('should return default icon for null/undefined', () => {
-      expect(getFormatIcon(null)).toBe('⚡');
-      expect(getFormatIcon(undefined)).toBe('⚡');
+      expect(getFormatIcon(null)).toBe('🎵');
+      expect(getFormatIcon(undefined)).toBe('🎵');
     });
   });
 
@@ -193,7 +197,7 @@ describe('formatUtils', () => {
       expect(duration).toBe('3:45');
       expect(position).toBe('2:05.5');
       expect(size).toBe('5 MB');
-      expect(icon).toBe('⚡');
+      expect(icon).toBe('📦');
     });
 
     it('should handle edge cases consistently', () => {
@@ -201,7 +205,7 @@ describe('formatUtils', () => {
       expect(formatDuration(0)).toBe('-');
       expect(formatTime(0)).toBe('0:00.0');
       expect(formatFileSize(0)).toBe('0 B');
-      expect(getFormatIcon('')).toBe('⚡');
+      expect(getFormatIcon('')).toBe('🎵');
     });
   });
 });
