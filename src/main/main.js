@@ -9,6 +9,7 @@ import { io } from 'socket.io-client';
 import AudioEngine from './audioEngine.js';
 import KaiLoader from '../utils/kaiLoader.js';
 import CDGLoader from '../utils/cdgLoader.js';
+import M4ALoader from '../utils/m4aLoader.js';
 import SettingsManager from './settingsManager.js';
 import WebServer from './webServer.js';
 import AppState from './appState.js';
@@ -771,6 +772,23 @@ class KaiPlayerApp {
               ...metadata,
             });
           }
+        } else if (lowerName.endsWith('.m4a') || lowerName.endsWith('.mp4')) {
+          // M4A/MP4 format - check if it has karaoke data
+          // eslint-disable-next-line no-await-in-loop
+          const metadata = await this.extractM4AMetadata(fullPath);
+          if (metadata && metadata.hasKaraoke) {
+            // eslint-disable-next-line no-await-in-loop
+            const stats = await fsPromises.stat(fullPath);
+            files.push({
+              name: fullPath,
+              path: fullPath,
+              size: stats.size,
+              modified: stats.mtime,
+              folder: path.relative(this.settings.getSongsFolder(), folderPath) || '.',
+              format: 'm4a-stems',
+              ...metadata,
+            });
+          }
         } else if (lowerName.endsWith('.cdg')) {
           // Track CDG files for pairing
           cdgMap.set(baseName, fullPath);
@@ -1090,6 +1108,99 @@ class KaiPlayerApp {
     return metadata;
   }
 
+  async extractM4AMetadata(m4aFilePath) {
+    const mm = await import('music-metadata');
+    // path already imported
+
+    const metadata = {
+      title: null,
+      artist: null,
+      album: null,
+      genre: null,
+      year: null,
+      duration: null,
+      hasKaraoke: false,
+      stems: [],
+      stemCount: 0,
+    };
+
+    try {
+      const mmData = await mm.parseFile(m4aFilePath);
+
+      // Extract standard MP4 metadata
+      if (mmData.common) {
+        metadata.title = mmData.common.title || null;
+        metadata.artist = mmData.common.artist || null;
+        metadata.album = mmData.common.album || null;
+        metadata.genre = mmData.common.genre ? mmData.common.genre[0] : null;
+        metadata.year =
+          mmData.common.date || (mmData.common.year ? String(mmData.common.year) : null);
+      }
+      if (mmData.format && mmData.format.duration) {
+        metadata.duration = mmData.format.duration;
+      }
+
+      // Check for kaid atom (karaoke data)
+      // The kaid atom is stored as '----:com.stems:kaid' in MP4 files
+      if (mmData.native && mmData.native.iTunes) {
+        const kaidAtom = mmData.native.iTunes.find((tag) => tag.id === '----:com.stems:kaid');
+
+        if (kaidAtom && kaidAtom.value) {
+          try {
+            // Parse kaid JSON
+            const kaidData = JSON.parse(kaidAtom.value);
+
+            // Check if it has lyrics (Level 1 minimum)
+            if (kaidData.lines && kaidData.lines.length > 0) {
+              metadata.hasKaraoke = true;
+
+              // Extract stem information if available
+              if (kaidData.audio && kaidData.audio.sources) {
+                metadata.stems = kaidData.audio.sources.map((source) => source.role || source.id);
+                metadata.stemCount = metadata.stems.length;
+              }
+            }
+          } catch (parseErr) {
+            console.warn('❌ Could not parse kaid atom from:', m4aFilePath, parseErr.message);
+          }
+        }
+      }
+
+      // Fallback to filename parsing if no tags
+      if (!metadata.title || !metadata.artist) {
+        const baseName = path.basename(m4aFilePath, path.extname(m4aFilePath));
+        // Remove .stem suffix if present
+        const cleanName = baseName.replace(/\.stem$/i, '');
+        const dashIndex = cleanName.indexOf(' - ');
+        if (dashIndex > 0 && dashIndex < cleanName.length - 3) {
+          if (!metadata.artist) metadata.artist = cleanName.substring(0, dashIndex).trim();
+          if (!metadata.title) metadata.title = cleanName.substring(dashIndex + 3).trim();
+        } else {
+          if (!metadata.title) metadata.title = cleanName;
+          if (!metadata.artist) metadata.artist = '';
+        }
+      }
+
+      // Ensure artist is never null
+      if (!metadata.artist) metadata.artist = '';
+    } catch (err) {
+      console.warn('❌ Could not parse M4A metadata:', err.message);
+      // Fallback to filename parsing
+      const baseName = path.basename(m4aFilePath, path.extname(m4aFilePath));
+      const cleanName = baseName.replace(/\.stem$/i, '');
+      const dashIndex = cleanName.indexOf(' - ');
+      if (dashIndex > 0 && dashIndex < cleanName.length - 3) {
+        metadata.artist = cleanName.substring(0, dashIndex).trim();
+        metadata.title = cleanName.substring(dashIndex + 3).trim();
+      } else {
+        metadata.title = cleanName;
+        metadata.artist = '';
+      }
+    }
+
+    return metadata;
+  }
+
   readKaiSongJson(kaiFilePath) {
     // yauzl already imported
 
@@ -1158,6 +1269,10 @@ class KaiPlayerApp {
       return this.loadCDGFile(filePath, format.cdgPath, format.format, queueItemId);
     }
 
+    if (format.type === 'm4a') {
+      return this.loadM4AFile(filePath, queueItemId);
+    }
+
     // Default: KAI format
     try {
       const kaiData = await KaiLoader.load(filePath);
@@ -1223,6 +1338,11 @@ class KaiPlayerApp {
 
   detectSongFormat(filePath) {
     const lowerPath = filePath.toLowerCase();
+
+    // Check for M4A/MP4 format (hasKaraoke check filters non-karaoke files)
+    if (lowerPath.endsWith('.m4a') || lowerPath.endsWith('.mp4')) {
+      return { type: 'm4a', format: 'm4a-stems', cdgPath: null };
+    }
 
     // Check for CDG archive (.kar or .zip but not .kai.zip)
     if (
@@ -1291,6 +1411,64 @@ class KaiPlayerApp {
       };
     } catch (error) {
       console.error('Failed to load CDG file:', error);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  async loadM4AFile(m4aPath, queueItemId = null) {
+    try {
+      console.log('🎵 Loading M4A file:', { m4aPath, queueItemId });
+      const m4aData = await M4ALoader.load(m4aPath);
+
+      // Add original file path to the song data
+      m4aData.originalFilePath = m4aPath;
+
+      // Load into audio engine (uses same path as KAI format)
+      if (this.audioEngine) {
+        await this.audioEngine.loadSong(m4aData);
+      }
+
+      this.currentSong = m4aData;
+
+      // Update AppState with current song info
+      // Set isLoading: true initially, will be cleared when song fully loads
+      const songData = {
+        path: m4aPath,
+        title: m4aData.metadata?.title || 'Unknown',
+        artist: m4aData.metadata?.artist || 'Unknown',
+        duration: m4aData.metadata?.duration || 0,
+        requester: m4aData.requester || 'KJ',
+        isLoading: true, // Song is being loaded
+        format: 'm4a-stems', // Format for display icon
+        queueItemId: queueItemId, // Track which queue item (for duplicate songs)
+      };
+      this.appState.setCurrentSong(songData);
+
+      console.log('🎵 M4A loaded, sending to renderer');
+      this.sendToRenderer('song:loaded', m4aData.metadata || {});
+      this.sendToRenderer('song:data', m4aData);
+
+      // Broadcast song loaded to web clients via Socket.IO (use songData, not m4aData!)
+      if (this.webServer) {
+        this.webServer.broadcastSongLoaded(songData);
+      }
+
+      // Notify queue manager that this song is now current
+      setTimeout(() => {
+        this.sendToRenderer('queue:songStarted', m4aPath);
+      }, 100);
+
+      return {
+        success: true,
+        metadata: m4aData.metadata,
+        meta: m4aData.meta,
+        stems: m4aData.audio.sources,
+      };
+    } catch (error) {
+      console.error('Failed to load M4A file:', error);
       return {
         success: false,
         error: error.message,
@@ -1455,6 +1633,10 @@ class KaiPlayerApp {
               // No paired MP3, skip this CDG
             }
           }
+          // M4A/MP4 files
+          else if (lowerName.endsWith('.m4a') || lowerName.endsWith('.mp4')) {
+            fileInfos.push({ path: fullPath, type: 'm4a' });
+          }
         }
       }
     }
@@ -1525,6 +1707,26 @@ class KaiPlayerApp {
               year: metadata.year,
               duration: metadata.duration,
               cdgPath: fileInfo.cdgPath,
+            });
+          }
+        } else if (fileInfo.type === 'm4a') {
+          // Sequential metadata extraction for M4A files
+          // eslint-disable-next-line no-await-in-loop
+          const metadata = await this.extractM4AMetadata(fullPath);
+          if (metadata && metadata.hasKaraoke) {
+            files.push({
+              name: fullPath,
+              path: fullPath,
+              file: fullPath,
+              format: 'm4a-stems',
+              title: metadata.title,
+              artist: metadata.artist,
+              album: metadata.album,
+              genre: metadata.genre,
+              year: metadata.year,
+              duration: metadata.duration,
+              stems: metadata.stems,
+              stemCount: metadata.stemCount,
             });
           }
         }

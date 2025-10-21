@@ -74,20 +74,20 @@ export class KAIPlayer extends PlayerInterface {
       // Load saved device preferences first
       await this.loadDevicePreferences();
 
-      console.log('🎧 KAIPlayer initializing with devices:', {
-        PA: this.outputDevices.PA,
-        IEM: this.outputDevices.IEM,
-        input: this.inputDevice,
-        sinkIdSupported: 'sinkId' in AudioContext.prototype,
-      });
+      // console.log('🎧 KAIPlayer initializing with devices:', {
+      //   PA: this.outputDevices.PA,
+      //   IEM: this.outputDevices.IEM,
+      //   input: this.inputDevice,
+      //   sinkIdSupported: 'sinkId' in AudioContext.prototype,
+      // });
 
       // Initialize PA audio context with saved device
       const paContextOptions = {};
       if (this.outputDevices.PA !== 'default' && 'sinkId' in AudioContext.prototype) {
         paContextOptions.sinkId = this.outputDevices.PA;
-        console.log('🎧 PA AudioContext using sinkId:', this.outputDevices.PA);
+        // console.log('🎧 PA AudioContext using sinkId:', this.outputDevices.PA);
       } else {
-        console.log('🎧 PA AudioContext using default device');
+        // console.log('🎧 PA AudioContext using default device');
       }
       this.audioContexts.PA = new (window.AudioContext || window.webkitAudioContext)(
         paContextOptions
@@ -102,9 +102,9 @@ export class KAIPlayer extends PlayerInterface {
       const iemContextOptions = {};
       if (this.outputDevices.IEM !== 'default' && 'sinkId' in AudioContext.prototype) {
         iemContextOptions.sinkId = this.outputDevices.IEM;
-        console.log('🎧 IEM AudioContext using sinkId:', this.outputDevices.IEM);
+        // console.log('🎧 IEM AudioContext using sinkId:', this.outputDevices.IEM);
       } else {
-        console.log('🎧 IEM AudioContext using default device');
+        // console.log('🎧 IEM AudioContext using default device');
       }
       this.audioContexts.IEM = new (window.AudioContext || window.webkitAudioContext)(
         iemContextOptions
@@ -235,7 +235,7 @@ export class KAIPlayer extends PlayerInterface {
 
       // If PA context was recreated, update microphone engine
       if (busType === 'PA' && this.micEngine) {
-        console.log('[AutoTune] PA context recreated, updating microphone engine...');
+        // console.log('[AutoTune] PA context recreated, updating microphone engine...');
         this.micEngine.updateAudioContext(this.audioContexts.PA, this.outputNodes.PA.masterGain);
         await this.micEngine.loadAutoTuneWorklet();
 
@@ -570,6 +570,12 @@ export class KAIPlayer extends PlayerInterface {
     this.startTime = scheduleTime;
 
     this.mixerState.stems.forEach((stem) => {
+      // Skip mixdown stems - they contain the full mix and would overlap with individual stems
+      if (this.isMixdownStem(stem.name)) {
+        console.log(`⏭️  Skipping mixdown stem: ${stem.name}`);
+        return;
+      }
+
       const audioBuffer = this.audioBuffers.get(stem.name);
       const paGainNode = this.outputNodes.PA.gainNodes.get(stem.name);
       const iemGainNode = this.outputNodes.IEM.gainNodes.get(stem.name);
@@ -628,6 +634,18 @@ export class KAIPlayer extends PlayerInterface {
     const vocalsKeywords = ['vocals', 'vocal', 'voice', 'lead', 'singing', 'vox'];
     const lowerName = stemName.toLowerCase();
     return vocalsKeywords.some((keyword) => lowerName.includes(keyword));
+  }
+
+  isMixdownStem(stemName) {
+    // Mixdown stems contain the full mix and should be skipped when individual stems are available
+    const mixdownKeywords = ['mixdown', 'mix', 'master', 'full mix', 'stereo mix'];
+    const lowerName = stemName.toLowerCase();
+    return mixdownKeywords.some(
+      (keyword) =>
+        lowerName === keyword ||
+        lowerName.includes(`_${keyword}`) ||
+        lowerName.includes(`${keyword}_`)
+    );
   }
 
   isMelodicStem(stemName) {
@@ -866,7 +884,7 @@ export class KAIPlayer extends PlayerInterface {
           this.micEngine.autotuneSettings.preferVocals = autoTunePrefs.preferVocals;
         }
 
-        console.log('[AutoTune] Loaded settings:', this.micEngine.autotuneSettings);
+        // console.log('[AutoTune] Loaded settings:', this.micEngine.autotuneSettings);
 
         // If auto-tune is enabled and mic is already running, apply it
         if (
@@ -874,7 +892,7 @@ export class KAIPlayer extends PlayerInterface {
           this.micEngine.microphoneGain &&
           this.micEngine.autoTuneWorkletsLoaded
         ) {
-          console.log('[AutoTune] Applying enabled auto-tune from saved settings');
+          // console.log('[AutoTune] Applying enabled auto-tune from saved settings');
           this.micEngine.enableAutoTune();
 
           // Reapply gain after auto-tune reconnects the audio chain

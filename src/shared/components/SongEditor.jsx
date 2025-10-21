@@ -5,6 +5,7 @@
  * - Search and load any song from library
  * - Edit ID3 metadata for CDG+MP3 files
  * - Edit ID3 metadata + lyrics for KAI files
+ * - Edit metadata + lyrics for M4A Stems files
  * - Auto-detects file format and shows appropriate editing options
  * - Supports both Electron (IPC) and Web (REST) environments
  */
@@ -328,8 +329,9 @@ export function SongEditor({ bridge }) {
           key: result.data.metadata?.key || song.key || '',
         });
 
-        // Populate lyrics if KAI file - server sends actual array with timing
-        if (result.data.format === 'kai') {
+        // Populate lyrics if KAI or M4A file - server sends actual array with timing
+        const hasLyrics = result.data.format === 'kai' || result.data.format === 'm4a-stems';
+        if (hasLyrics) {
           const lyrics = result.data.lyrics || [];
           // Sort lyrics by start time to ensure proper order
           const sortedLyrics = [...lyrics].sort((a, b) => {
@@ -385,11 +387,11 @@ export function SongEditor({ bridge }) {
         setSearchResults([]);
         setSearchTerm('');
 
-        // Default to lyrics tab for KAI files, metadata for others
-        setActiveTab(result.data.format === 'kai' ? 'lyrics' : 'metadata');
+        // Default to lyrics tab for KAI/M4A files, metadata for others
+        setActiveTab(hasLyrics ? 'lyrics' : 'metadata');
 
-        // Load audio if KAI file
-        if (result.data.format === 'kai' && result.data.audioFiles) {
+        // Load audio if KAI or M4A file
+        if (hasLyrics && result.data.audioFiles) {
           loadAudioFiles(result.data.audioFiles);
         }
       }
@@ -398,7 +400,7 @@ export function SongEditor({ bridge }) {
     }
   };
 
-  // Load audio files for KAI songs
+  // Load audio files for KAI and M4A songs
   const loadAudioFiles = (audioFiles) => {
     try {
       // Clean up existing audio
@@ -1012,8 +1014,8 @@ export function SongEditor({ bridge }) {
             </div>
           </div>
 
-          {/* Tab navigation for KAI files */}
-          {songData.format === 'kai' && (
+          {/* Tab navigation for KAI and M4A files */}
+          {(songData.format === 'kai' || songData.format === 'm4a-stems') && (
             <div className="flex gap-1 border-b-2 border-gray-200 dark:border-gray-700 pb-0">
               <button
                 className={`px-6 py-3 bg-transparent border-none border-b-[3px] font-semibold text-[15px] cursor-pointer transition-all -mb-0.5 ${activeTab === 'lyrics' ? 'text-blue-600 border-b-blue-600' : 'text-gray-600 dark:text-gray-400 border-b-transparent hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700'}`}
@@ -1031,7 +1033,8 @@ export function SongEditor({ bridge }) {
           )}
 
           {/* Metadata form */}
-          {(activeTab === 'metadata' || songData.format !== 'kai') && (
+          {(activeTab === 'metadata' ||
+            (songData.format !== 'kai' && songData.format !== 'm4a-stems')) && (
             <div className="flex flex-col gap-6 overflow-y-auto flex-1 pb-6">
               <h3 className="text-lg font-semibold m-0 text-gray-900 dark:text-white">Metadata</h3>
               <div className="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-5">
@@ -1105,153 +1108,154 @@ export function SongEditor({ bridge }) {
             </div>
           )}
 
-          {/* Lyrics editor for KAI files */}
-          {songData.format === 'kai' && activeTab === 'lyrics' && (
-            <>
-              {/* Waveform canvas */}
-              <LyricsEditorCanvas
-                lyricsData={lyricsData}
-                selectedLineIndex={selectedLineIndex}
-                onLineSelect={setSelectedLineIndex}
-                vocalsWaveform={vocalsWaveform}
-                songDuration={songDuration}
-                currentPosition={currentPosition}
-                isPlaying={isPlaying}
-              />
+          {/* Lyrics editor for KAI and M4A files */}
+          {(songData.format === 'kai' || songData.format === 'm4a-stems') &&
+            activeTab === 'lyrics' && (
+              <>
+                {/* Waveform canvas */}
+                <LyricsEditorCanvas
+                  lyricsData={lyricsData}
+                  selectedLineIndex={selectedLineIndex}
+                  onLineSelect={setSelectedLineIndex}
+                  vocalsWaveform={vocalsWaveform}
+                  songDuration={songDuration}
+                  currentPosition={currentPosition}
+                  isPlaying={isPlaying}
+                />
 
-              {/* Line detail canvas - zoomed view of selected line */}
-              <LineDetailCanvas
-                selectedLine={selectedLineIndex !== null ? lyricsData[selectedLineIndex] : null}
-                vocalsWaveform={vocalsWaveform}
-                songDuration={songDuration}
-                currentPosition={currentPosition}
-                isPlaying={isPlaying}
-              />
+                {/* Line detail canvas - zoomed view of selected line */}
+                <LineDetailCanvas
+                  selectedLine={selectedLineIndex !== null ? lyricsData[selectedLineIndex] : null}
+                  vocalsWaveform={vocalsWaveform}
+                  songDuration={songDuration}
+                  currentPosition={currentPosition}
+                  isPlaying={isPlaying}
+                />
 
-              {/* Audio playback controls */}
-              {audioElements.length > 0 && (
-                <div className="flex items-center gap-2 px-2 py-1.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded flex-shrink-0">
-                  <button
-                    onClick={togglePlayback}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 border-blue-600 rounded text-white cursor-pointer text-xs transition-colors hover:bg-blue-700"
-                  >
-                    <span className="material-icons text-base">
-                      {isPlaying ? 'pause' : 'play_arrow'}
-                    </span>
-                    {isPlaying ? 'Pause' : 'Play'}
-                  </button>
-                  <div className="flex gap-1.5 flex-wrap flex-1 items-center">
-                    {audioElements.map((el, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center gap-1 px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded"
-                      >
-                        <span className="text-[11px] font-semibold text-gray-900 dark:text-white min-w-[45px]">
-                          {el.name}
-                        </span>
-                        <button
-                          onClick={() => toggleMute(index)}
-                          className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${el.muted ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                {/* Audio playback controls */}
+                {audioElements.length > 0 && (
+                  <div className="flex items-center gap-2 px-2 py-1.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded flex-shrink-0">
+                    <button
+                      onClick={togglePlayback}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 border-blue-600 rounded text-white cursor-pointer text-xs transition-colors hover:bg-blue-700"
+                    >
+                      <span className="material-icons text-base">
+                        {isPlaying ? 'pause' : 'play_arrow'}
+                      </span>
+                      {isPlaying ? 'Pause' : 'Play'}
+                    </button>
+                    <div className="flex gap-1.5 flex-wrap flex-1 items-center">
+                      {audioElements.map((el, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center gap-1 px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded"
                         >
-                          <span className="material-icons text-xs">
-                            {el.muted ? 'volume_off' : 'volume_up'}
+                          <span className="text-[11px] font-semibold text-gray-900 dark:text-white min-w-[45px]">
+                            {el.name}
                           </span>
-                          {el.muted ? 'Muted' : 'On'}
-                        </button>
-                      </div>
-                    ))}
+                          <button
+                            onClick={() => toggleMute(index)}
+                            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] cursor-pointer transition-colors ${el.muted ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                          >
+                            <span className="material-icons text-xs">
+                              {el.muted ? 'volume_off' : 'volume_up'}
+                            </span>
+                            {el.muted ? 'Muted' : 'On'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      onClick={handleExportLyrics}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white cursor-pointer text-xs transition-colors hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={!lyricsData || lyricsData.length === 0}
+                      title="Export lyrics as text file"
+                    >
+                      <span className="material-icons text-base">download</span>
+                      Export
+                    </button>
+                    <button
+                      onClick={handleResetLyrics}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white cursor-pointer text-xs transition-colors hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={!hasChanges}
+                      title="Reset to original lyrics"
+                    >
+                      <span className="material-icons text-base">restore</span>
+                      Reset
+                    </button>
+                    <button
+                      onClick={handleAddLineAtStart}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white cursor-pointer text-xs transition-colors hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={!canAddLineAtStart()}
+                      title={
+                        canAddLineAtStart()
+                          ? 'Add line at beginning'
+                          : 'Not enough space (need 0.6s gap)'
+                      }
+                    >
+                      <span className="material-icons text-base">add</span>
+                      Add First Line
+                    </button>
                   </div>
-                  <button
-                    onClick={handleExportLyrics}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white cursor-pointer text-xs transition-colors hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={!lyricsData || lyricsData.length === 0}
-                    title="Export lyrics as text file"
-                  >
-                    <span className="material-icons text-base">download</span>
-                    Export
-                  </button>
-                  <button
-                    onClick={handleResetLyrics}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white cursor-pointer text-xs transition-colors hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={!hasChanges}
-                    title="Reset to original lyrics"
-                  >
-                    <span className="material-icons text-base">restore</span>
-                    Reset
-                  </button>
-                  <button
-                    onClick={handleAddLineAtStart}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-gray-900 dark:text-white cursor-pointer text-xs transition-colors hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={!canAddLineAtStart()}
-                    title={
-                      canAddLineAtStart()
-                        ? 'Add line at beginning'
-                        : 'Not enough space (need 0.6s gap)'
-                    }
-                  >
-                    <span className="material-icons text-base">add</span>
-                    Add First Line
-                  </button>
-                </div>
-              )}
+                )}
 
-              {/* Scrollable container for lyrics and corrections */}
-              <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-                {/* Lyrics lines */}
-                <div className="flex flex-col gap-0 p-3 overflow-y-auto flex-1">
-                  {lyricsData && lyricsData.length > 0 ? (
-                    lyricsData.map((line, index) => (
-                      <LyricLine
-                        key={`lyric-${index}`}
-                        line={line}
-                        index={index}
-                        isSelected={selectedLineIndex === index}
-                        onSelect={setSelectedLineIndex}
-                        onUpdate={handleLineUpdate}
-                        onDelete={handleLineDelete}
-                        onAddAfter={handleAddLineAfter}
-                        onPlaySection={handlePlayLineSection}
-                        canAddAfter={canAddLineAfter(index)}
-                      />
-                    ))
-                  ) : (
-                    <div className="text-center p-10 text-gray-500 dark:text-gray-400 text-base">
-                      No lyrics available. Load a KAI file with lyrics to edit.
+                {/* Scrollable container for lyrics and corrections */}
+                <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+                  {/* Lyrics lines */}
+                  <div className="flex flex-col gap-0 p-3 overflow-y-auto flex-1">
+                    {lyricsData && lyricsData.length > 0 ? (
+                      lyricsData.map((line, index) => (
+                        <LyricLine
+                          key={`lyric-${index}`}
+                          line={line}
+                          index={index}
+                          isSelected={selectedLineIndex === index}
+                          onSelect={setSelectedLineIndex}
+                          onUpdate={handleLineUpdate}
+                          onDelete={handleLineDelete}
+                          onAddAfter={handleAddLineAfter}
+                          onPlaySection={handlePlayLineSection}
+                          canAddAfter={canAddLineAfter(index)}
+                        />
+                      ))
+                    ) : (
+                      <div className="text-center p-10 text-gray-500 dark:text-gray-400 text-base">
+                        No lyrics available. Load a KAI file with lyrics to edit.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* AI Corrections Section */}
+                  {(rejections.length > 0 || suggestions.length > 0) && (
+                    <div className="mb-6 p-4 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md">
+                      <h3 className="text-base font-semibold m-0 mb-4 text-gray-900 dark:text-white">
+                        AI Corrections & Suggestions
+                      </h3>
+
+                      {rejections.map((rejection, rejectionIndex) => (
+                        <LyricRejection
+                          key={`rejection-${rejectionIndex}`}
+                          rejection={rejection}
+                          rejectionIndex={rejectionIndex}
+                          onAccept={handleAcceptRejection}
+                          onDelete={handleDeleteRejection}
+                        />
+                      ))}
+
+                      {suggestions.map((suggestion, suggestionIndex) => (
+                        <LyricSuggestion
+                          key={`suggestion-${suggestionIndex}`}
+                          suggestion={suggestion}
+                          suggestionIndex={suggestionIndex}
+                          onAccept={handleAcceptSuggestion}
+                          onDelete={handleDeleteSuggestion}
+                        />
+                      ))}
                     </div>
                   )}
                 </div>
-
-                {/* AI Corrections Section */}
-                {(rejections.length > 0 || suggestions.length > 0) && (
-                  <div className="mb-6 p-4 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md">
-                    <h3 className="text-base font-semibold m-0 mb-4 text-gray-900 dark:text-white">
-                      AI Corrections & Suggestions
-                    </h3>
-
-                    {rejections.map((rejection, rejectionIndex) => (
-                      <LyricRejection
-                        key={`rejection-${rejectionIndex}`}
-                        rejection={rejection}
-                        rejectionIndex={rejectionIndex}
-                        onAccept={handleAcceptRejection}
-                        onDelete={handleDeleteRejection}
-                      />
-                    ))}
-
-                    {suggestions.map((suggestion, suggestionIndex) => (
-                      <LyricSuggestion
-                        key={`suggestion-${suggestionIndex}`}
-                        suggestion={suggestion}
-                        suggestionIndex={suggestionIndex}
-                        onAccept={handleAcceptSuggestion}
-                        onDelete={handleDeleteSuggestion}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+              </>
+            )}
         </div>
       )}
 

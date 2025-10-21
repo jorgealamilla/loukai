@@ -930,6 +930,31 @@ class WebServer {
               songJson: result.kaiData.originalSongJson || {},
             },
           });
+        } else if (result.format === 'm4a-stems') {
+          // For M4A files, add download URLs for extracted audio tracks
+          const audioFiles = result.kaiData.audio.sources.map((source) => {
+            const trackName = source.name;
+            const fileId = Buffer.from(`${path}:${trackName}:${source.trackIndex}`).toString(
+              'base64url'
+            );
+
+            return {
+              name: source.name,
+              filename: `${trackName}.m4a`,
+              downloadUrl: `/admin/editor/m4a-audio/${fileId}`,
+            };
+          });
+
+          res.json({
+            success: true,
+            data: {
+              format: 'm4a-stems',
+              metadata: result.kaiData.metadata || {},
+              lyrics: result.kaiData.lyrics || [],
+              audioFiles: audioFiles,
+              songJson: result.kaiData.originalSongJson || {},
+            },
+          });
         } else {
           // For CDG+MP3, read ID3 tags from MP3 file
           const fs = await import('fs/promises');
@@ -1043,6 +1068,62 @@ class WebServer {
         res.send(audioSource.audioData);
       } catch (error) {
         console.error('Failed to download KAI audio:', error);
+        res.status(500).json({
+          success: false,
+          error: error.message,
+        });
+      }
+    });
+
+    // Download M4A audio track (extracted from M4A Stems file)
+    this.app.get('/admin/editor/m4a-audio/:fileId', async (req, res) => {
+      try {
+        const { fileId } = req.params;
+
+        // Decode the fileId to get path, trackName, and trackIndex
+        const decoded = Buffer.from(fileId, 'base64url').toString('utf8');
+        const [m4aPath, trackName, trackIndexStr] = decoded.split(':');
+        const trackIndex = parseInt(trackIndexStr, 10);
+
+        console.log('📥 M4A audio request:', { m4aPath, trackName, trackIndex });
+
+        // Load the M4A file to extract the audio track
+        const M4ALoader = (await import('../utils/m4aLoader.js')).default;
+        const m4aData = await M4ALoader.load(m4aPath);
+
+        // Find the audio source by track index
+        const audioSource = m4aData.audio.sources.find((s) => s.trackIndex === trackIndex);
+
+        if (!audioSource) {
+          return res.status(404).json({
+            success: false,
+            error: `Audio track not found: ${trackName} (index ${trackIndex})`,
+          });
+        }
+
+        // Extract the audio track if not already extracted
+        let audioData = audioSource.audioData;
+        if (!audioData) {
+          console.log(`🎵 Extracting track ${trackIndex} from M4A file...`);
+          audioData = await M4ALoader.extractTrack(m4aPath, trackIndex);
+        }
+
+        if (!audioData) {
+          return res.status(500).json({
+            success: false,
+            error: 'Failed to extract audio track',
+          });
+        }
+
+        // Send the audio file
+        const filename = `${trackName}.m4a`;
+        res.setHeader('Content-Type', 'audio/mp4');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(audioData);
+
+        console.log(`✅ Sent M4A track: ${filename} (${audioData.length} bytes)`);
+      } catch (error) {
+        console.error('Failed to download M4A audio:', error);
         res.status(500).json({
           success: false,
           error: error.message,

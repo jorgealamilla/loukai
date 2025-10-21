@@ -6,12 +6,14 @@
 export function getFormatIcon(format) {
   switch (format) {
     case 'kai':
-      return '⚡';
+      return '📦'; // KAI archive format
+    case 'm4a-stems':
+      return '⚡'; // M4A stems format
     case 'cdg-archive':
     case 'cdg-pair':
       return '💿';
     default:
-      return '⚡'; // Default to KAI icon
+      return '🎵'; // Default music icon
   }
 }
 

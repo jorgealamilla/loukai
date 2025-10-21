@@ -95,10 +95,16 @@ export function useAudioEngine() {
       currentSong: null,
       _pendingMetadata: null,
       randomEffectTimeout: null,
-      handleSongEnded: () => {
-        // Song ended - trigger next song via IPC
+      handleSongEnded: async () => {
+        // Song ended - reset position to 0 and pause to show title screen
+        if (player && player.currentPlayer) {
+          await player.currentPlayer.seek(0);
+          await player.pause();
+        }
+
+        // Trigger next song via IPC
         if (window.kaiAPI?.player) {
-          window.kaiAPI.player.next();
+          await window.kaiAPI.player.next();
         }
       },
       updateStatus: (msg) => console.log('📊', msg),
