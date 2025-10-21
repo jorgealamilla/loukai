@@ -154,7 +154,7 @@ class AudioEngine extends EventEmitter {
         },
       };
 
-      console.log('Input stream created');
+      // console.log('Input stream created');
     } catch (error) {
       console.error('Failed to create input stream:', error);
     }

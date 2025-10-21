@@ -22,7 +22,7 @@ export function registerWebServerHandlers(mainApp) {
 
   // Get web server URL
   ipcMain.handle('webServer:getUrl', () => {
-    console.log('🔍 webServer:getUrl called', { hasWebServer: Boolean(mainApp.webServer) });
+    // console.log('🔍 webServer:getUrl called', { hasWebServer: Boolean(mainApp.webServer) });
     return mainApp.webServer?.getServerUrl() || null;
   });
 

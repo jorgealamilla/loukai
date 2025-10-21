@@ -68,11 +68,11 @@ export class MicrophoneEngine {
 
       // Ensure AudioContext is running (not suspended) before loading worklets
       if (this.audioContext.state === 'suspended') {
-        console.log('[MicEngine] Resuming suspended AudioContext before loading worklets');
+        // console.log('[MicEngine] Resuming suspended AudioContext before loading worklets');
         await this.audioContext.resume();
       }
 
-      console.log('[MicEngine] Loading worklet modules...');
+      // console.log('[MicEngine] Loading worklet modules...');
 
       // Load mic pitch detector worklet
       await this.audioContext.audioWorklet.addModule('js/micPitchDetectorWorklet.js');
@@ -84,7 +84,7 @@ export class MicrophoneEngine {
       await this.audioContext.audioWorklet.addModule('js/musicAnalysisWorklet.js');
 
       this.autoTuneWorkletsLoaded = true;
-      console.log('[MicEngine] ✅ Worklets loaded successfully (using phase vocoder)');
+      // console.log('[MicEngine] ✅ Worklets loaded successfully (using phase vocoder)');
     } catch (error) {
       console.error('[MicEngine] ❌ Failed to load worklets:', error);
       this.autoTuneWorkletsLoaded = false;
@@ -165,14 +165,14 @@ export class MicrophoneEngine {
         return;
       }
 
-      console.log('[MicEngine] Enabling auto-tune...');
+      // console.log('[MicEngine] Enabling auto-tune...');
 
       // Disconnect current mic connections
       this.microphoneGain.disconnect();
 
       // Create mic pitch detector node if it doesn't exist
       if (!this.micPitchDetectorNode) {
-        console.log('[MicEngine] Creating mic pitch detector node');
+        // console.log('[MicEngine] Creating mic pitch detector node');
         this.micPitchDetectorNode = new AudioWorkletNode(this.audioContext, 'mic-pitch-detector');
 
         // Listen for pitch detection results
@@ -185,7 +185,7 @@ export class MicrophoneEngine {
 
       // Create pitch shifter node if it doesn't exist
       if (!this.pitchShifterNode) {
-        console.log('[MicEngine] Creating phase vocoder pitch shifter node');
+        // console.log('[MicEngine] Creating phase vocoder pitch shifter node');
         this.pitchShifterNode = new AudioWorkletNode(this.audioContext, 'phase-vocoder-processor');
 
         // Send sample rate to worklet
@@ -197,13 +197,13 @@ export class MicrophoneEngine {
         // Initialize pitch shift to 0 (no change)
         if (this.pitchShifterNode.parameters) {
           this.pitchShifterNode.parameters.get('pitchSemitones').value = 0;
-          console.log('[MicEngine] Initialized phase vocoder pitch shift to 0 semitones');
+          // console.log('[MicEngine] Initialized phase vocoder pitch shift to 0 semitones');
         }
       }
 
       // Create makeup gain node (phase vocoder preserves volume better than SoundTouch)
       if (!this.pitchShifterMakeupGain) {
-        console.log('[MicEngine] Creating makeup gain node');
+        // console.log('[MicEngine] Creating makeup gain node');
         this.pitchShifterMakeupGain = this.audioContext.createGain();
         // Phase vocoder preserves volume well, only need slight boost
         this.pitchShifterMakeupGain.gain.value = 1.2;
@@ -214,7 +214,7 @@ export class MicrophoneEngine {
 
       // Create dynamics compressor to prevent clipping and smooth out peaks
       if (!this.compressor) {
-        console.log('[MicEngine] Creating dynamics compressor');
+        // console.log('[MicEngine] Creating dynamics compressor');
         this.compressor = this.audioContext.createDynamicsCompressor();
         // Gentle compression to catch peaks without squashing dynamics
         this.compressor.threshold.value = -24; // dB
@@ -222,12 +222,12 @@ export class MicrophoneEngine {
         this.compressor.ratio.value = 3; // 3:1 compression ratio
         this.compressor.attack.value = 0.003; // 3ms attack (fast enough to catch transients)
         this.compressor.release.value = 0.1; // 100ms release (natural envelope)
-        console.log('[MicEngine] Compressor configured for smooth auto-tune output');
+        // console.log('[MicEngine] Compressor configured for smooth auto-tune output');
       }
 
       // Create music analysis node for pitch detection from music (fallback)
       if (!this.musicAnalysisNode) {
-        console.log('[MicEngine] Creating music analysis node');
+        // console.log('[MicEngine] Creating music analysis node');
         this.musicAnalysisNode = new AudioWorkletNode(
           this.audioContext,
           'music-analysis-processor'
@@ -287,7 +287,7 @@ export class MicrophoneEngine {
           this.microphoneGain.disconnect();
           if (this.micToSpeakers) {
             this.microphoneGain.connect(this.outputNode);
-            console.log('[MicEngine] Restored direct mic connection after error');
+            // console.log('[MicEngine] Restored direct mic connection after error');
           }
         }
       } catch (restoreError) {
@@ -303,7 +303,7 @@ export class MicrophoneEngine {
     try {
       if (!this.microphoneGain) return;
 
-      console.log('[MicEngine] Disabling auto-tune');
+      // console.log('[MicEngine] Disabling auto-tune');
 
       // Stop pitch tracking
       this.stopPitchTracking();
@@ -484,7 +484,7 @@ export class MicrophoneEngine {
       return;
     }
 
-    console.log('[MicEngine] Starting pitch tracking loop (20Hz)');
+    // console.log('[MicEngine] Starting pitch tracking loop (20Hz)');
 
     // Update pitch tracking at ~20Hz (every 50ms)
     this.pitchTrackingInterval = setInterval(() => {
@@ -573,7 +573,7 @@ export class MicrophoneEngine {
     if (this.pitchTrackingInterval) {
       clearInterval(this.pitchTrackingInterval);
       this.pitchTrackingInterval = null;
-      console.log('[MicEngine] Stopped pitch tracking loop');
+      // console.log('[MicEngine] Stopped pitch tracking loop');
     }
   }
 
@@ -615,7 +615,7 @@ export class MicrophoneEngine {
     if (this.musicAnalysisNode && sourceNode) {
       try {
         sourceNode.connect(this.musicAnalysisNode);
-        console.log('[MicEngine] Connected music source to pitch analysis');
+        // console.log('[MicEngine] Connected music source to pitch analysis');
       } catch (error) {
         console.error('[MicEngine] Failed to connect music source:', error);
       }

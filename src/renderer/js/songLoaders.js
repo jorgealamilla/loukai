@@ -221,6 +221,97 @@ async function setupButterchurnForCDG(app, songData, waveformPrefs) {
 }
 
 /**
+ * Load M4A Stems format song
+ */
+export async function loadM4ASong(app, songData, metadata) {
+  app.player.currentFormat = 'm4a-stems';
+  app.player.currentPlayer = app.kaiPlayer;
+
+  // Set song end callback
+  app.player.currentPlayer.onSongEnded(() => app.handleSongEnded());
+
+  // CLEAN SLATE APPROACH: Reinitialize audio engine (same as KAI)
+  if (app.kaiPlayer && app.currentSong) {
+    // Create a backup copy of the song data BEFORE reinitialize
+    const songDataBackup = {
+      ...app.currentSong,
+      audio: app.currentSong.audio
+        ? {
+            ...app.currentSong.audio,
+            sources: app.currentSong.audio.sources ? [...app.currentSong.audio.sources] : [],
+          }
+        : null,
+    };
+
+    await app.kaiPlayer.reinitialize();
+    await app.kaiPlayer.loadSong(songDataBackup);
+
+    // Restore the original song data if it was corrupted
+    if (!app.currentSong.audio && songDataBackup.audio) {
+      app.currentSong.audio = songDataBackup.audio;
+    }
+    if (!app.currentSong.lyrics && songDataBackup.lyrics) {
+      app.currentSong.lyrics = songDataBackup.lyrics;
+    }
+  }
+
+  // CLEAN SLATE APPROACH: Reinitialize karaoke renderer
+  if (app.player && app.currentSong) {
+    if (app.player.karaokeRenderer) {
+      app.player.karaokeRenderer.reinitialize();
+    }
+
+    // Pass full song data which includes lyrics, audio sources, and updated duration
+    const fullMetadata = {
+      ...metadata,
+      lyrics: app.currentSong.lyrics,
+      duration: app.kaiPlayer
+        ? app.kaiPlayer.getDuration()
+        : app.currentSong.metadata?.duration || 0,
+      audio: app.currentSong.audio, // Include audio sources for vocals waveform
+      requester: metadata.requester || songData.requester || app.currentSong.requester,
+    };
+    app.player.onSongLoaded(fullMetadata);
+
+    // Load and apply waveform preferences from settings
+    const waveformPrefs = await window.kaiAPI.settings.get('waveformPreferences', {
+      enableWaveforms: true,
+      enableEffects: true,
+      randomEffectOnSong: false,
+      showUpcomingLyrics: true,
+      overlayOpacity: 0.7,
+    });
+
+    // Apply preferences to karaokeRenderer
+    if (app.player.karaokeRenderer) {
+      app.player.karaokeRenderer.setWaveformsEnabled(waveformPrefs.enableWaveforms);
+      app.player.karaokeRenderer.setEffectsEnabled(waveformPrefs.enableEffects);
+      app.player.karaokeRenderer.setShowUpcomingLyrics(waveformPrefs.showUpcomingLyrics);
+      app.player.karaokeRenderer.waveformPreferences.overlayOpacity = waveformPrefs.overlayOpacity;
+
+      // Restart microphone capture if waveforms are enabled
+      if (waveformPrefs.enableWaveforms) {
+        setTimeout(() => {
+          app.player.karaokeRenderer.startMicrophoneCapture();
+        }, 100);
+      }
+
+      // Update effect display with current preset
+      setTimeout(() => app.updateEffectDisplay(), 100);
+
+      // Apply random effect if enabled
+      await applyRandomEffectIfEnabled(app, waveformPrefs);
+    }
+  }
+
+  // Wait for all contexts and buffers to be ready
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  // Clear pending metadata
+  app._pendingMetadata = null;
+}
+
+/**
  * Apply random Butterchurn effect if enabled (with debouncing)
  */
 function applyRandomEffectIfEnabled(app, waveformPrefs) {

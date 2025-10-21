@@ -1,6 +1,6 @@
 /**
  * Editor IPC Handlers
- * Handles KAI file editing operations
+ * Handles song editing operations (KAI and M4A formats)
  */
 
 import { ipcMain } from 'electron';
@@ -10,64 +10,88 @@ import { ipcMain } from 'electron';
  * @param {Object} mainApp - Main application instance
  */
 export function registerEditorHandlers(mainApp) {
-  // Load KAI file for editing (without loading into player)
+  // Load song file for editing (KAI or M4A)
   ipcMain.handle('editor:loadKai', async (event, filePath) => {
     try {
-      console.log('Load KAI file for editing:', filePath);
+      console.log('Load song file for editing:', filePath);
 
       const editorService = await import('../../shared/services/editorService.js');
       const result = await editorService.loadSong(filePath);
 
-      console.log('KAI file loaded for editing, has lyrics:', result.kaiData.lyrics?.length || 0);
+      console.log(
+        `${result.format.toUpperCase()} file loaded for editing, has lyrics:`,
+        result.kaiData.lyrics?.length || 0
+      );
 
       return {
         success: true,
         data: result.kaiData,
+        format: result.format, // Include format in response
       };
     } catch (error) {
-      console.error('Failed to load KAI file for editing:', error);
+      console.error('Failed to load song file for editing:', error);
       return { success: false, error: error.message };
     }
   });
 
-  // Save KAI file
+  // Save song file (KAI or M4A)
   ipcMain.handle('editor:saveKai', async (event, kaiData, originalPath) => {
     try {
-      console.log('Save KAI file request:', originalPath);
-      console.log('Updated lyrics:', kaiData.lyrics.length, 'lines');
+      console.log('Save song file request:', originalPath);
+      console.log('Updated lyrics:', kaiData.lyrics?.length || 0, 'lines');
+
+      // Determine format from file extension
+      const lowerPath = originalPath.toLowerCase();
+      let format;
+      if (lowerPath.endsWith('.kai')) {
+        format = 'kai';
+      } else if (lowerPath.endsWith('.m4a') || lowerPath.endsWith('.mp4')) {
+        format = 'm4a-stems';
+      } else {
+        throw new Error('Unsupported file format');
+      }
 
       const editorService = await import('../../shared/services/editorService.js');
       const _result = await editorService.saveSong(originalPath, {
-        format: 'kai',
-        metadata: kaiData.song || {},
+        format: format,
+        metadata: kaiData.song || kaiData.metadata || {},
         lyrics: kaiData.lyrics,
       });
 
-      console.log('KAI file saved successfully');
+      console.log(`${format.toUpperCase()} file saved successfully`);
       return { success: true };
     } catch (error) {
-      console.error('Failed to save KAI file:', error);
+      console.error('Failed to save song file:', error);
       return { success: false, error: error.message };
     }
   });
 
-  // Reload KAI file in player
+  // Reload song file in player (KAI or M4A)
   ipcMain.handle('editor:reloadKai', async (event, filePath) => {
     try {
-      console.log('Reload KAI file request:', filePath);
+      console.log('Reload song file request:', filePath);
 
-      // Reload the KAI file using the existing loadKaiFile method
-      const result = await mainApp.loadKaiFile(filePath);
+      // Determine format and call appropriate loader
+      const lowerPath = filePath.toLowerCase();
+      let result;
+
+      if (lowerPath.endsWith('.kai')) {
+        result = await mainApp.loadKaiFile(filePath);
+      } else if (lowerPath.endsWith('.m4a') || lowerPath.endsWith('.mp4')) {
+        result = await mainApp.loadM4AFile(filePath);
+      } else {
+        throw new Error('Unsupported file format');
+      }
 
       if (result && result.success) {
-        console.log('KAI file reloaded successfully');
+        console.log('Song file reloaded successfully');
         return { success: true };
       } else {
-        console.error('Failed to reload KAI file');
+        console.error('Failed to reload song file');
         return { success: false, error: 'Failed to reload file' };
       }
     } catch (error) {
-      console.error('Failed to reload KAI file:', error);
+      console.error('Failed to reload song file:', error);
       return { success: false, error: error.message };
     }
   });
