@@ -463,6 +463,10 @@ export class KAIPlayer extends PlayerInterface {
   }
 
   pause() {
+    // Save current playback position BEFORE setting isPlaying to false
+    // (getCurrentPosition uses isPlaying to calculate position)
+    this.currentPosition = this.getCurrentPosition();
+
     this.isPlaying = false;
 
     if (this.audioContexts.PA) {

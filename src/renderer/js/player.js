@@ -95,11 +95,17 @@ export class PlayerController {
       }
 
       // Load music audio data for background effects analysis
+      // For M4A stems, use 'mixdown' (full mix) for best visualization
+      // Note: This is only decoded for visualization, NOT played through PA speakers
       const musicSource = metadata.audio.sources.find(
         (source) =>
+          source.name === 'mixdown' || // M4A stems full mix (vocals included, but only for visualization)
+          source.name === 'mix' ||
+          source.name === 'other' || // Fallback to melodic instruments
           source.name === 'music' ||
           source.name === 'instrumental' ||
           source.name === 'backing' ||
+          source.filename?.includes('mixdown') ||
           source.filename?.includes('music') ||
           source.filename?.includes('instrumental')
       );
@@ -107,7 +113,7 @@ export class PlayerController {
       if (musicSource && musicSource.audioData) {
         this.karaokeRenderer.setMusicAudio(musicSource.audioData);
       } else {
-        // Fallback to any available source that's not vocals
+        // Fallback to any available non-vocal source
         const fallbackSource = metadata.audio.sources.find(
           (source) =>
             source.name !== 'vocals' && !source.filename?.includes('vocals') && source.audioData
@@ -169,6 +175,13 @@ export class PlayerController {
 
   async play() {
     this.isPlaying = true;
+
+    // Update renderer's current time BEFORE starting playback
+    // This ensures butterchurn starts from the correct position on resume
+    if (this.currentPlayer && this.karaokeRenderer) {
+      const position = this.currentPlayer.getCurrentPosition();
+      this.karaokeRenderer.setCurrentTime(position);
+    }
 
     if (this.karaokeRenderer) {
       this.karaokeRenderer.setPlaying(true);
