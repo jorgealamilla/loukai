@@ -137,6 +137,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-artifacts
+          path: .
 
       - name: Analyze bundle sizes
         run: |
