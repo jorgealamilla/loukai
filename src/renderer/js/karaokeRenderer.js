@@ -22,6 +22,10 @@ export class KaraokeRenderer {
     // Animation tracking for backup singers
     this.backupAnimations = new Map(); // lineIndex -> { alpha, fadeDirection, lastStateChange }
 
+    // Callback for when current line's singer changes (for backup:PA feature)
+    this.onSingerChange = null; // function(singer) - called when active line's singer changes
+    this.lastActiveSinger = null; // Track last singer to detect changes
+
     // Lyric transition animations
     this.lyricTransitions = new Map(); // Track lyrics moving from upcoming to active
     this.hiddenDuringTransition = new Set(); // Track lines that should be hidden during transitions
@@ -120,6 +124,10 @@ export class KaraokeRenderer {
       lyricTransitionDuration: 0.3, // Animation duration in seconds (300ms)
       lyricTransitionStartBefore: 0.3, // Start animation this many seconds before active (300ms)
       backupActiveColor: '#FFD700', // Brighter gold when active
+      // Singer type colors
+      singerBColor: '#EF4444', // Red for Singer B (duet partner)
+      duetColor: '#22C55E', // Green for duet (both singers)
+      backupPAColor: '#FFA500', // Orange for backup:PA (brighter than gold backup)
       backgroundColor: '#1a1a1a',
       shadowColor: '#000000',
       linesVisible: 1, // Show only current line
@@ -398,13 +406,18 @@ export class KaraokeRenderer {
         if (typeof line === 'object' && line !== null) {
           const words = this.parseWordsFromLine(line);
           const text = line.text || line.lyrics || line.content || line.lyric || '';
+          // Support new singer field format (backup, backup:PA, B, duet, etc.)
+          // Falls back to legacy backup boolean for compatibility
+          const singer = line.singer || (line.backup === true ? 'backup' : null);
+          const isBackup = singer?.startsWith('backup') || false;
           return {
             id: index,
             startTime: line.start || line.time || line.start_time || index * 3,
             endTime: line.end || line.end_time || (line.start || line.time || index * 3) + 3,
             text: text,
             words: words,
-            isBackup: line.backup === true,
+            singer: singer, // New: singer field (null, 'A', 'B', 'backup', 'backup:PA', 'duet')
+            isBackup: isBackup, // Derived from singer field for backward compatibility
           };
         } else {
           // Simple string - create word timing estimates
@@ -427,7 +440,7 @@ export class KaraokeRenderer {
     // If the line has word-level timing data, use it
     if (line.words && Array.isArray(line.words)) {
       return line.words.map((word) => ({
-        text: word.t || word.text || '',
+        text: word.t || word.text || word.word || '', // word.word for Whisper output
         startTime: word.s || word.start || word.startTime || 0,
         endTime: word.e || word.end || word.endTime || 0,
       }));
@@ -1579,6 +1592,9 @@ export class KaraokeRenderer {
     // Find current line
     const currentLineIndex = this.findCurrentLine();
 
+    // Check for singer change (for backup:PA feature)
+    this.checkSingerChange(currentLineIndex);
+
     if (currentLineIndex >= 0 && currentLineIndex < this.lyrics.length) {
       // Check if we're in an instrumental gap first
       const isInInstrumentalGap = this.isInInstrumentalGap(currentLineIndex);
@@ -1809,6 +1825,30 @@ export class KaraokeRenderer {
     return -1;
   }
 
+  /**
+   * Check if the current active line's singer has changed and notify via callback.
+   * This is used for the backup:PA feature to route vocals to PA when needed.
+   */
+  checkSingerChange(currentLineIndex) {
+    if (!this.onSingerChange) return;
+
+    // Determine current singer from active line
+    let currentSinger = null;
+    if (currentLineIndex >= 0 && currentLineIndex < this.lyrics.length) {
+      const line = this.lyrics[currentLineIndex];
+      // Only track singer for lines we're currently within (not gaps)
+      if (this.currentTime >= line.startTime && this.currentTime <= line.endTime) {
+        currentSinger = line.singer || null;
+      }
+    }
+
+    // Check if singer has changed
+    if (currentSinger !== this.lastActiveSinger) {
+      this.lastActiveSinger = currentSinger;
+      this.onSingerChange(currentSinger);
+    }
+  }
+
   drawCurrentLyricLine(currentLineIndex, canvasWidth, canvasHeight) {
     if (currentLineIndex < 0 || currentLineIndex >= this.lyrics.length) return;
 
@@ -1969,17 +2009,48 @@ export class KaraokeRenderer {
     }
 
     // Draw upcoming lyrics if enabled and not skipped (positioned dynamically after current lyrics)
-    // BUT don't draw upcoming lyrics if:
-    // 1. There are active transitions (prevents flash during intro->first lyric)
-    // 2. There are active main singer lyrics (only show upcoming during intro/outro/gaps)
+    // Show upcoming lyrics when:
+    // 1. Not currently skipping upcoming display
+    // 2. Setting is enabled
+    // 3. No active transitions (prevents flash during transitions)
+    // The upcoming lyric will show in gray below the current lyric and animate up when it becomes active
     if (
       !skipUpcoming &&
       this.waveformPreferences.showUpcomingLyrics &&
-      this.lyricTransitions.size === 0 &&
-      !hasActiveMainSinger
+      this.lyricTransitions.size === 0
     ) {
       this.drawUpcomingLyrics(canvasWidth, canvasHeight, upcomingY);
     }
+  }
+
+  /**
+   * Get the display color for a line based on its singer type.
+   * @param {object} line - The lyric line with optional singer field
+   * @returns {string} - The hex color to use for the line
+   */
+  getSingerColor(line) {
+    const singer = line.singer;
+    if (!singer) return this.settings.activeColor; // Default lead (A)
+
+    if (singer === 'B') return this.settings.singerBColor;
+    if (singer === 'duet') return this.settings.duetColor;
+    if (singer === 'backup:PA') return this.settings.backupPAColor;
+    if (singer === 'backup') return this.settings.backupActiveColor;
+
+    // For any other value (like 'A'), use default active color
+    return this.settings.activeColor;
+  }
+
+  /**
+   * Get the prefix icon for a singer type.
+   * @param {object} line - The lyric line with optional singer field
+   * @returns {string} - The prefix string (icon or empty)
+   */
+  getSingerPrefix(line) {
+    const singer = line.singer;
+    // backup:PA uses brighter color instead of prefix (audio is the indicator)
+    if (singer === 'backup') return '♪ ';
+    return '';
   }
 
   drawSingleLine(line, canvasWidth, yPosition, isBackup, alpha = 1.0) {
@@ -1999,8 +2070,8 @@ export class KaraokeRenderer {
       this.ctx.globalAlpha = alpha;
     }
 
-    // Choose colors based on singer type
-    this.ctx.fillStyle = isBackup ? this.settings.backupActiveColor : this.settings.activeColor;
+    // Choose colors based on singer type (uses new singer field if available)
+    this.ctx.fillStyle = this.getSingerColor(line);
 
     // Get text from line
     let text = '';
@@ -2039,16 +2110,19 @@ export class KaraokeRenderer {
 
       // Draw each wrapped line
       let finalY = yPosition;
+      const prefix = this.getSingerPrefix(line);
+      // Get glow color for non-lead singers (helps identify whose line it is)
+      const glowColor = line.singer ? this.getSingerColor(line) : null;
       lines.forEach((textLine, index) => {
         const adjustedY = yPosition + index * this.settings.lineHeight * 0.8;
         finalY = adjustedY + this.settings.lineHeight * 0.8; // Bottom of this line
 
-        // Add visual indicator for backup singers (prefix)
-        if (isBackup) {
-          const prefixedText = `♪ ${textLine}`;
-          this.drawTextWithBackground(prefixedText, canvasWidth / 2, adjustedY);
+        // Add visual indicator prefix for first line only (based on singer type)
+        if (index === 0 && prefix) {
+          const prefixedText = `${prefix}${textLine}`;
+          this.drawTextWithBackground(prefixedText, canvasWidth / 2, adjustedY, glowColor);
         } else {
-          this.drawTextWithBackground(textLine, canvasWidth / 2, adjustedY);
+          this.drawTextWithBackground(textLine, canvasWidth / 2, adjustedY, glowColor);
         }
       });
 
@@ -2678,7 +2752,7 @@ export class KaraokeRenderer {
     });
   }
 
-  drawTextWithBackground(text, x, y) {
+  drawTextWithBackground(text, x, y, glowColor = null) {
     // Measure text dimensions properly
     const metrics = this.ctx.measureText(text);
     const textWidth = metrics.width;
@@ -2705,8 +2779,16 @@ export class KaraokeRenderer {
     this.ctx.fill();
     this.ctx.restore();
 
-    // Draw main text
+    // Draw main text with optional glow for singer identification
+    this.ctx.save();
+    if (glowColor) {
+      this.ctx.shadowColor = glowColor;
+      this.ctx.shadowBlur = 12;
+      this.ctx.shadowOffsetX = 0;
+      this.ctx.shadowOffsetY = 0;
+    }
     this.ctx.fillText(text, x, y);
+    this.ctx.restore();
   }
 
   drawProgressBar(x, y, width, height, progress, canvasWidth) {
@@ -2998,14 +3080,17 @@ export class KaraokeRenderer {
       text = lockedLine.words.map((w) => w.text || w.word || w).join(' ');
     }
 
+    // Get glow color for non-lead singers (so you know whose line is coming up)
+    const glowColor = lockedLine.singer ? this.getSingerColor(lockedLine) : null;
+
     if (text) {
-      this.drawWrappedText(text, canvasWidth / 2, currentY, canvasWidth * 0.9);
+      this.drawWrappedText(text, canvasWidth / 2, currentY, canvasWidth * 0.9, glowColor);
     }
 
     this.ctx.restore();
   }
 
-  drawWrappedText(text, x, y, maxWidth) {
+  drawWrappedText(text, x, y, maxWidth, glowColor = null) {
     const words = text.split(' ');
     let currentLine = '';
     let linesRendered = 0;
@@ -3017,7 +3102,7 @@ export class KaraokeRenderer {
 
       if (testWidth > maxWidth && currentLine) {
         // Draw current line and start new line
-        this.drawTextWithBackground(currentLine, x, y);
+        this.drawTextWithBackground(currentLine, x, y, glowColor);
         y += lineHeight;
         linesRendered++;
         currentLine = words[i];
@@ -3028,7 +3113,7 @@ export class KaraokeRenderer {
 
     // Draw the final line
     if (currentLine) {
-      this.drawTextWithBackground(currentLine, x, y);
+      this.drawTextWithBackground(currentLine, x, y, glowColor);
       linesRendered++;
     }
 
@@ -3178,9 +3263,12 @@ export class KaraokeRenderer {
     const currentY =
       transition.startY + (transition.endY - transition.startY) * transition.progress;
 
-    // Interpolate color from upcoming grey to active color
+    // Get the singer's target color (instead of hardcoded blue)
+    const targetColorHex = this.getSingerColor(line);
+    const endColor = this.hexToRgb(targetColorHex);
+
+    // Interpolate color from upcoming grey to singer's active color
     const startColor = { r: 136, g: 136, b: 136 }; // #888888 (upcoming grey from settings)
-    const endColor = { r: 0, g: 191, b: 255 }; // #00BFFF (active blue from settings)
 
     const r = Math.round(startColor.r + (endColor.r - startColor.r) * transition.progress);
     const g = Math.round(startColor.g + (endColor.g - startColor.g) * transition.progress);
@@ -3202,6 +3290,9 @@ export class KaraokeRenderer {
     } else if (line.words && line.words.length > 0) {
       text = line.words.map((w) => w.text || w.word || w).join(' ');
     }
+
+    // Get glow color for non-lead singers during transition
+    const glowColor = line.singer ? targetColorHex : null;
 
     if (text) {
       // Handle word wrapping during transition to prevent layout jumps
@@ -3234,11 +3325,35 @@ export class KaraokeRenderer {
       const lineHeight = this.settings.lineHeight * 0.8;
       lines.forEach((textLine, index) => {
         const adjustedY = currentY + index * lineHeight;
-        this.drawTextWithBackground(textLine, canvasWidth / 2, adjustedY);
+        this.drawTextWithBackground(textLine, canvasWidth / 2, adjustedY, glowColor);
       });
     }
 
     this.ctx.restore();
+  }
+
+  // Helper to convert hex color to RGB object
+  hexToRgb(hex) {
+    // Default to cyan if invalid
+    const defaultColor = { r: 0, g: 191, b: 255 };
+    if (!hex || typeof hex !== 'string') return defaultColor;
+
+    // Remove # if present
+    hex = hex.replace(/^#/, '');
+
+    // Parse 3 or 6 digit hex
+    if (hex.length === 3) {
+      hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    }
+
+    if (hex.length !== 6) return defaultColor;
+
+    const num = parseInt(hex, 16);
+    return {
+      r: (num >> 16) & 255,
+      g: (num >> 8) & 255,
+      b: num & 255,
+    };
   }
 }
 

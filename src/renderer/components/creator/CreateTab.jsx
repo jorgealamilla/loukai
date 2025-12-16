@@ -10,6 +10,91 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { LLM_DEFAULTS } from '../../../shared/defaults.js';
+import { PortalSelect } from '../PortalSelect.jsx';
+
+// ============================================================================
+// Shared Styles
+// ============================================================================
+const STYLES = {
+  input:
+    'w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white',
+  select:
+    'w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white',
+  btnPrimary:
+    'px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors',
+  btnSecondary:
+    'px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors',
+  btnSuccess:
+    'px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors',
+  sectionTitle: 'text-lg font-semibold text-gray-900 dark:text-white mb-4',
+  card: 'bg-gray-100 dark:bg-gray-800 rounded-lg p-6',
+};
+
+// ============================================================================
+// Helper Components
+// ============================================================================
+
+function Spinner({ message, size = 'md' }) {
+  const sizeClasses = {
+    sm: 'h-8 w-8',
+    md: 'h-12 w-12',
+  };
+  return (
+    <div className="text-center">
+      <div
+        className={`animate-spin rounded-full ${sizeClasses[size]} border-b-2 border-blue-500 mx-auto mb-3`}
+      />
+      {message && <p className="text-gray-600 dark:text-gray-400">{message}</p>}
+    </div>
+  );
+}
+
+function ErrorDisplay({ error, onDismiss }) {
+  if (!error) return null;
+  return (
+    <div className="bg-red-100 dark:bg-red-900/30 border border-red-400 dark:border-red-600 text-red-700 dark:text-red-400 px-4 py-3 rounded mb-6 select-text">
+      {onDismiss && (
+        <button
+          className="float-right text-red-700 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300 text-xl leading-none"
+          onClick={onDismiss}
+        >
+          ×
+        </button>
+      )}
+      <div className="font-mono text-sm whitespace-pre-wrap overflow-x-auto max-h-96">{error}</div>
+    </div>
+  );
+}
+
+function MissingLinesDetails({ missingLines }) {
+  if (!missingLines || missingLines.length === 0) return null;
+  return (
+    <details className="text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded p-2">
+      <summary className="cursor-pointer font-semibold">
+        💡 {missingLines.length} missing line{missingLines.length !== 1 ? 's' : ''} suggested (not
+        applied)
+      </summary>
+      <ul className="mt-2 space-y-1 ml-4 list-disc max-h-40 overflow-y-auto">
+        {missingLines.map((line, i) => (
+          <li key={i}>
+            <span className="text-blue-600 dark:text-blue-400">"{line.suggested_text}"</span>{' '}
+            <span className="text-gray-500 dark:text-gray-400">
+              ({line.start?.toFixed(1)}s-{line.end?.toFixed(1)}s, {line.confidence} confidence)
+            </span>
+            {line.reason && (
+              <div className="text-gray-500 dark:text-gray-400 ml-2">→ {line.reason}</div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+function SongTitle({ artist, title }) {
+  return artist ? `${artist} - ${title}` : title;
+}
 
 // Format LLM provider name for display
 function formatProviderName(provider) {
@@ -28,8 +113,12 @@ export function CreateTab({ bridge: _bridge }) {
   const [installProgress, setInstallProgress] = useState(null);
   const [error, setError] = useState(null);
 
+  // Sub-tab state: 'create' or 'settings'
+  const [activeSubTab, setActiveSubTab] = useState('create');
+
   // File and conversion state
   const [selectedFile, setSelectedFile] = useState(null);
+  const [fileLoading, setFileLoading] = useState(false); // Loading state for file selection
   const [conversionProgress, setConversionProgress] = useState(null);
   const [completedFile, setCompletedFile] = useState(null);
   const [llmStats, setLlmStats] = useState(null);
@@ -43,23 +132,19 @@ export function CreateTab({ bridge: _bridge }) {
   const [options, setOptions] = useState({
     title: '',
     artist: '',
-    numStems: 4, // 2 = vocals+backing, 4 = vocals+drums+bass+other
-    whisperModel: 'large-v3-turbo',
+    numStems: 4, // Always 4 stems for .stem.m4a format
     language: 'en',
-    enableCrepe: true,
     referenceLyrics: '',
   });
 
-  // LLM settings
-  const [llmSettings, setLlmSettings] = useState({
-    enabled: true,
-    provider: 'anthropic',
-    model: '',
-    apiKey: '',
-    baseUrl: 'http://localhost:1234/v1',
-  });
-  const [showLlmSettings, setShowLlmSettings] = useState(false);
+  // LLM settings - uses unified defaults from shared/defaults.js
+  const [llmSettings, setLlmSettings] = useState({ ...LLM_DEFAULTS });
   const [llmTestResult, setLlmTestResult] = useState(null);
+
+  // Output settings
+  const [outputToSongsFolder, setOutputToSongsFolder] = useState(false);
+  const [whisperModel, setWhisperModel] = useState('large-v3-turbo');
+  const [enableCrepe, setEnableCrepe] = useState(true);
 
   const checkComponents = useCallback(async () => {
     setStatus('checking');
@@ -102,6 +187,27 @@ export function CreateTab({ bridge: _bridge }) {
       }
     };
     loadLLMSettings();
+
+    // Load output settings
+    const loadOutputSettings = async () => {
+      try {
+        const outputToSongs = await window.kaiAPI?.settings?.get(
+          'creator.outputToSongsFolder',
+          false
+        );
+        setOutputToSongsFolder(outputToSongs);
+        const whisper = await window.kaiAPI?.settings?.get(
+          'creator.whisperModel',
+          'large-v3-turbo'
+        );
+        setWhisperModel(whisper);
+        const crepe = await window.kaiAPI?.settings?.get('creator.enableCrepe', true);
+        setEnableCrepe(crepe);
+      } catch (err) {
+        console.error('Failed to load output settings:', err);
+      }
+    };
+    loadOutputSettings();
 
     // Listen for installation progress
     const onInstallProgress = (_event, progress) => {
@@ -203,9 +309,12 @@ export function CreateTab({ bridge: _bridge }) {
 
   const handleSelectFile = async () => {
     try {
+      setFileLoading(true);
+      setError(null);
       const result = await window.kaiAPI?.creator?.selectFile();
 
       if (result?.cancelled) {
+        setFileLoading(false);
         return;
       }
 
@@ -224,6 +333,8 @@ export function CreateTab({ bridge: _bridge }) {
       }
     } catch (err) {
       setError(err.message);
+    } finally {
+      setFileLoading(false);
     }
   };
 
@@ -264,16 +375,26 @@ export function CreateTab({ bridge: _bridge }) {
     conversionStartTimeRef.current = Date.now();
 
     try {
+      // Get output directory based on settings
+      let outputDir = undefined; // Default: same directory as source file
+      if (outputToSongsFolder) {
+        const songsFolder = await window.kaiAPI?.library?.getSongsFolder?.();
+        if (songsFolder) {
+          outputDir = songsFolder;
+        }
+      }
+
       const result = await window.kaiAPI?.creator?.startConversion({
         inputPath: selectedFile.path,
         title: options.title || selectedFile.title,
         artist: options.artist || selectedFile.artist,
         tags: selectedFile.tags || {}, // Preserve all original ID3 tags
         numStems: options.numStems,
-        whisperModel: options.whisperModel,
+        whisperModel: whisperModel,
         language: options.language,
-        enableCrepe: options.enableCrepe,
+        enableCrepe: enableCrepe,
         referenceLyrics: options.referenceLyrics,
+        outputDir,
       });
 
       if (!result?.success) {
@@ -309,9 +430,7 @@ export function CreateTab({ bridge: _bridge }) {
       title: '',
       artist: '',
       numStems: 4,
-      whisperModel: 'large-v3-turbo',
       language: 'en',
-      enableCrepe: true,
       referenceLyrics: '',
     });
     setStatus('ready');
@@ -354,10 +473,7 @@ export function CreateTab({ bridge: _bridge }) {
   if (status === 'checking') {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4" />
-          <p className="text-gray-600 dark:text-gray-400">Checking AI tools...</p>
-        </div>
+        <Spinner message="Checking AI tools..." />
       </div>
     );
   }
@@ -391,13 +507,13 @@ export function CreateTab({ bridge: _bridge }) {
                 style={{ width: `${installProgress?.progress || 0}%` }}
               />
             </div>
-            <p className="text-gray-600 dark:text-gray-400 mt-2">
+            <p className="text-gray-600 dark:text-gray-400 mt-2 break-words">
               {installProgress?.message || 'Starting...'}
             </p>
           </div>
 
           <button
-            className="px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors"
+            className={STYLES.btnSecondary}
             onClick={() => window.kaiAPI?.creator?.cancelInstall()}
           >
             Cancel
@@ -420,13 +536,7 @@ export function CreateTab({ bridge: _bridge }) {
             separation (Demucs), lyrics transcription (Whisper), and pitch detection (CREPE).
           </p>
 
-          {error && (
-            <div className="bg-red-100 dark:bg-red-900/30 border border-red-400 dark:border-red-600 text-red-700 dark:text-red-400 px-4 py-3 rounded mb-6 select-text">
-              <div className="font-mono text-sm whitespace-pre-wrap overflow-x-auto max-h-96">
-                {error}
-              </div>
-            </div>
-          )}
+          <ErrorDisplay error={error} />
 
           <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 mb-6 text-left">
             <div className="space-y-2">
@@ -456,10 +566,7 @@ export function CreateTab({ bridge: _bridge }) {
             <p>Disk space required: ~5 GB</p>
           </div>
 
-          <button
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
-            onClick={handleInstall}
-          >
+          <button className={STYLES.btnPrimary} onClick={handleInstall}>
             Install AI Tools
           </button>
         </div>
@@ -479,7 +586,7 @@ export function CreateTab({ bridge: _bridge }) {
 
             <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 mb-4">
               <p className="text-gray-700 dark:text-gray-300 font-medium">
-                {options.artist ? `${options.artist} - ${options.title}` : options.title}
+                <SongTitle artist={options.artist} title={options.title} />
               </p>
             </div>
 
@@ -493,30 +600,24 @@ export function CreateTab({ bridge: _bridge }) {
               <p className="text-gray-600 dark:text-gray-400 mt-3">
                 {conversionProgress?.message || 'Starting...'}
               </p>
-              <p className="text-sm text-gray-500 dark:text-gray-500 mt-1">
-                Step: {conversionProgress?.step || 'initializing'}
-              </p>
             </div>
 
-            <button
-              className="px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors"
-              onClick={handleCancelConversion}
-            >
+            {/* Console Log Panel */}
+            {consoleLog.length > 0 && (
+              <div className="mb-6 bg-gray-900 dark:bg-black rounded-lg p-4 h-32 overflow-y-auto">
+                <div className="text-xs font-mono text-green-400 whitespace-pre-wrap select-text leading-tight">
+                  {consoleLog.map((line, i) => (
+                    <div key={i}>{line}</div>
+                  ))}
+                  <div ref={consoleEndRef} />
+                </div>
+              </div>
+            )}
+
+            <button className={STYLES.btnSecondary} onClick={handleCancelConversion}>
               Cancel
             </button>
           </div>
-
-          {/* Console Log Panel */}
-          {consoleLog.length > 0 && (
-            <div className="mt-6 bg-gray-900 dark:bg-black rounded-lg p-4 h-32 overflow-y-auto">
-              <div className="text-xs font-mono text-green-400 whitespace-pre-wrap select-text leading-tight">
-                {consoleLog.map((line, i) => (
-                  <div key={i}>{line}</div>
-                ))}
-                <div ref={consoleEndRef} />
-              </div>
-            </div>
-          )}
         </div>
       </div>
     );
@@ -534,25 +635,15 @@ export function CreateTab({ bridge: _bridge }) {
 
           <div className="bg-green-100 dark:bg-green-900/30 rounded-lg p-4 mb-6">
             <p className="text-green-700 dark:text-green-400 font-medium">
-              {options.artist ? `${options.artist} - ${options.title}` : options.title}
+              <SongTitle artist={options.artist} title={options.title} />
             </p>
 
             {/* Processing Stats */}
             <div className="text-sm text-gray-600 dark:text-gray-400 mt-2 space-y-1">
-              {songDuration && (
-                <p>
-                  🎵 Song length: {Math.floor(songDuration / 60)}:
-                  {Math.floor(songDuration % 60)
-                    .toString()
-                    .padStart(2, '0')}
-                </p>
-              )}
+              {songDuration && <p>🎵 Song length: {formatDuration(songDuration)}</p>}
               {processingTime && (
                 <p>
-                  ⏱️ Processing time: {Math.floor(processingTime / 60)}:
-                  {Math.floor(processingTime % 60)
-                    .toString()
-                    .padStart(2, '0')}
+                  ⏱️ Processing time: {formatDuration(processingTime)}
                   {songDuration && (
                     <span className="ml-2 text-xs">
                       ({(songDuration / processingTime).toFixed(1)}x realtime)
@@ -602,32 +693,7 @@ export function CreateTab({ bridge: _bridge }) {
                     </ul>
                   </details>
                 )}
-                {llmStats.missing_lines && llmStats.missing_lines.length > 0 && (
-                  <details className="text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded p-2">
-                    <summary className="cursor-pointer font-semibold">
-                      💡 {llmStats.missing_lines.length} missing line
-                      {llmStats.missing_lines.length !== 1 ? 's' : ''} suggested (not applied)
-                    </summary>
-                    <ul className="mt-2 space-y-1 ml-4 list-disc max-h-40 overflow-y-auto">
-                      {llmStats.missing_lines.map((line, i) => (
-                        <li key={i}>
-                          <span className="text-blue-600 dark:text-blue-400">
-                            "{line.suggested_text}"
-                          </span>{' '}
-                          <span className="text-gray-500 dark:text-gray-400">
-                            ({line.start?.toFixed(1)}s-{line.end?.toFixed(1)}s, {line.confidence}{' '}
-                            confidence)
-                          </span>
-                          {line.reason && (
-                            <div className="text-gray-500 dark:text-gray-400 ml-2">
-                              → {line.reason}
-                            </div>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
+                <MissingLinesDetails missingLines={llmStats.missing_lines} />
               </div>
             ) : llmStats && llmStats.corrections_applied === 0 ? (
               <div className="mt-2">
@@ -637,32 +703,7 @@ export function CreateTab({ bridge: _bridge }) {
                     ? `, ${llmStats.missing_lines_suggested} missing line${llmStats.missing_lines_suggested !== 1 ? 's' : ''} suggested`
                     : ''}
                 </p>
-                {llmStats.missing_lines && llmStats.missing_lines.length > 0 && (
-                  <details className="text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded p-2 mt-2">
-                    <summary className="cursor-pointer font-semibold">
-                      💡 {llmStats.missing_lines.length} missing line
-                      {llmStats.missing_lines.length !== 1 ? 's' : ''} suggested (not applied)
-                    </summary>
-                    <ul className="mt-2 space-y-1 ml-4 list-disc max-h-40 overflow-y-auto">
-                      {llmStats.missing_lines.map((line, i) => (
-                        <li key={i}>
-                          <span className="text-blue-600 dark:text-blue-400">
-                            "{line.suggested_text}"
-                          </span>{' '}
-                          <span className="text-gray-500 dark:text-gray-400">
-                            ({line.start?.toFixed(1)}s-{line.end?.toFixed(1)}s, {line.confidence}{' '}
-                            confidence)
-                          </span>
-                          {line.reason && (
-                            <div className="text-gray-500 dark:text-gray-400 ml-2">
-                              → {line.reason}
-                            </div>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
+                <MissingLinesDetails missingLines={llmStats.missing_lines} />
               </div>
             ) : (
               <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
@@ -676,10 +717,7 @@ export function CreateTab({ bridge: _bridge }) {
           </div>
 
           <div className="space-x-4">
-            <button
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
-              onClick={handleCreateAnother}
-            >
+            <button className={STYLES.btnPrimary} onClick={handleCreateAnother}>
               Create Another
             </button>
           </div>
@@ -692,370 +730,420 @@ export function CreateTab({ bridge: _bridge }) {
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="max-w-2xl mx-auto">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
-          Create Stems+Karaoke File ⚡
-        </h2>
-
-        {error && (
-          <div className="bg-red-100 dark:bg-red-900/30 border border-red-400 dark:border-red-600 text-red-700 dark:text-red-400 px-4 py-3 rounded mb-6 select-text">
-            <button
-              className="float-right text-red-700 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300 text-xl leading-none"
-              onClick={() => setError(null)}
-            >
-              ×
-            </button>
-            <div className="font-mono text-sm whitespace-pre-wrap overflow-x-auto max-h-96">
-              {error}
-            </div>
-          </div>
-        )}
-
-        {/* File Selection */}
-        <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-6 mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            1. Select Audio File
-          </h3>
-
-          {selectedFile ? (
-            <div className="flex items-center justify-between">
-              <div className="flex-1 min-w-0">
-                <p className="text-gray-900 dark:text-white font-medium truncate">
-                  {selectedFile.name}
-                </p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  {formatDuration(selectedFile.duration)} •{' '}
-                  {selectedFile.codec?.toUpperCase() || 'Unknown'}{' '}
-                  {selectedFile.isVideo && '• Video'}
-                </p>
-              </div>
-              <button
-                className="ml-4 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors"
-                onClick={handleSelectFile}
-              >
-                Change
-              </button>
-            </div>
-          ) : (
-            <button
-              className="w-full px-6 py-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 dark:hover:border-blue-400 transition-colors"
-              onClick={handleSelectFile}
-            >
-              <div className="text-gray-600 dark:text-gray-400">
-                <div className="text-3xl mb-2">🎵</div>
-                <p>Click to select an audio or video file</p>
-                <p className="text-sm mt-1">MP3, WAV, FLAC, OGG, M4A, MP4, MKV, AVI, MOV, WEBM</p>
-              </div>
-            </button>
-          )}
+        {/* Sub-tab navigation */}
+        <div className="flex border-b border-gray-300 dark:border-gray-600 mb-6">
+          <button
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeSubTab === 'create'
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+            onClick={() => setActiveSubTab('create')}
+          >
+            Create
+          </button>
+          <button
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeSubTab === 'settings'
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+            onClick={() => setActiveSubTab('settings')}
+          >
+            Settings
+          </button>
         </div>
 
-        {/* Song Info */}
-        <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-6 mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            2. Song Information
-          </h3>
+        <ErrorDisplay error={error} onDismiss={() => setError(null)} />
 
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Title
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                value={options.title}
-                onChange={(e) => setOptions((prev) => ({ ...prev, title: e.target.value }))}
-                placeholder="Song title"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Artist
-              </label>
-              <input
-                type="text"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                value={options.artist}
-                onChange={(e) => setOptions((prev) => ({ ...prev, artist: e.target.value }))}
-                placeholder="Artist name"
-              />
-            </div>
-          </div>
+        {/* Settings Sub-tab */}
+        {activeSubTab === 'settings' && (
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Creator Settings</h2>
 
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Reference Lyrics (optional)
-              </label>
-              <button
-                className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
-                onClick={handleSearchLyrics}
-              >
-                Search LRCLIB
-              </button>
-            </div>
-            <textarea
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white h-24 resize-none"
-              value={options.referenceLyrics}
-              onChange={(e) => setOptions((prev) => ({ ...prev, referenceLyrics: e.target.value }))}
-              placeholder="Paste lyrics here to improve transcription accuracy..."
-            />
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Reference lyrics help Whisper recognize song-specific vocabulary
-            </p>
-          </div>
-        </div>
-
-        {/* Options */}
-        <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-6 mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">3. Options</h3>
-
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Stem Separation
-              </label>
-              <select
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                value={options.numStems}
-                onChange={(e) =>
-                  setOptions((prev) => ({ ...prev, numStems: Number(e.target.value) }))
-                }
-              >
-                <option value={2}>2 Stems (Vocals + Backing)</option>
-                <option value={4}>4 Stems (Vocals + Drums + Bass + Other)</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Whisper Model
-              </label>
-              <select
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                value={options.whisperModel}
-                onChange={(e) => setOptions((prev) => ({ ...prev, whisperModel: e.target.value }))}
-              >
-                <option value="large-v3-turbo">Large V3 Turbo (recommended)</option>
-                <option value="large-v3">Large V3 (slower, slightly better)</option>
-                <option value="medium">Medium (faster)</option>
-                <option value="small">Small (fastest)</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Language
-              </label>
-              <select
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                value={options.language}
-                onChange={(e) => setOptions((prev) => ({ ...prev, language: e.target.value }))}
-              >
-                <option value="en">English</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-                <option value="it">Italian</option>
-                <option value="pt">Portuguese</option>
-                <option value="ja">Japanese</option>
-                <option value="ko">Korean</option>
-                <option value="zh">Chinese</option>
-              </select>
-            </div>
-            <div className="flex items-center">
+            {/* Output Location */}
+            <div className={STYLES.card}>
+              <h3 className={STYLES.sectionTitle}>Output Location</h3>
               <label className="flex items-center cursor-pointer">
                 <input
                   type="checkbox"
                   className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  checked={options.enableCrepe}
-                  onChange={(e) =>
-                    setOptions((prev) => ({ ...prev, enableCrepe: e.target.checked }))
-                  }
+                  checked={outputToSongsFolder}
+                  onChange={async (e) => {
+                    const value = e.target.checked;
+                    setOutputToSongsFolder(value);
+                    await window.kaiAPI?.settings?.set('creator.outputToSongsFolder', value);
+                  }}
+                />
+                <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                  Save output files to karaoke songs folder
+                </span>
+              </label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                When enabled, created .stem.m4a files will be saved to your configured songs library
+                folder instead of next to the source file.
+              </p>
+            </div>
+
+            {/* Whisper Model */}
+            <div className={STYLES.card}>
+              <h3 className={STYLES.sectionTitle}>Whisper Model</h3>
+              <div className="w-64">
+                <PortalSelect
+                  value={whisperModel}
+                  onChange={async (e) => {
+                    const value = e.target.value;
+                    setWhisperModel(value);
+                    await window.kaiAPI?.settings?.set('creator.whisperModel', value);
+                  }}
+                  options={[
+                    { value: 'large-v3-turbo', label: 'Large V3 Turbo (recommended)' },
+                    { value: 'large-v3', label: 'Large V3 (slower, slightly better)' },
+                    { value: 'medium', label: 'Medium (faster)' },
+                    { value: 'small', label: 'Small (fastest)' },
+                  ]}
+                />
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                Larger models are more accurate but slower. Large V3 Turbo is recommended for most
+                users.
+              </p>
+            </div>
+
+            {/* Pitch Detection */}
+            <div className={STYLES.card}>
+              <h3 className={STYLES.sectionTitle}>Pitch Detection</h3>
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  checked={enableCrepe}
+                  onChange={async (e) => {
+                    const value = e.target.checked;
+                    setEnableCrepe(value);
+                    await window.kaiAPI?.settings?.set('creator.enableCrepe', value);
+                  }}
                 />
                 <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
                   Enable pitch detection (CREPE)
                 </span>
               </label>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                Analyzes vocal pitch for karaoke scoring features. Adds processing time but enables
+                pitch visualization.
+              </p>
+            </div>
+
+            {/* LLM Settings */}
+            <div className={STYLES.card}>
+              <h3 className={STYLES.sectionTitle}>AI Lyrics Correction</h3>
+
+              <div className="space-y-4">
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    checked={llmSettings.enabled}
+                    onChange={(e) =>
+                      setLlmSettings((prev) => ({ ...prev, enabled: e.target.checked }))
+                    }
+                  />
+                  <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                    Use AI to improve lyrics accuracy (compares Whisper output to reference lyrics)
+                  </span>
+                </label>
+
+                {llmSettings.enabled && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        AI Provider
+                      </label>
+                      <PortalSelect
+                        value={llmSettings.provider}
+                        onChange={(e) =>
+                          setLlmSettings((prev) => ({ ...prev, provider: e.target.value }))
+                        }
+                        options={[
+                          {
+                            value: 'lmstudio',
+                            label: 'Local LLM Server (LM Studio, Ollama, etc.)',
+                          },
+                          { value: 'anthropic', label: 'Anthropic Claude' },
+                          { value: 'openai', label: 'OpenAI' },
+                          { value: 'gemini', label: 'Google Gemini' },
+                        ]}
+                      />
+                    </div>
+
+                    {llmSettings.provider !== 'lmstudio' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          API Key
+                        </label>
+                        <input
+                          type="password"
+                          className={STYLES.input}
+                          value={llmSettings.apiKey}
+                          onChange={(e) =>
+                            setLlmSettings((prev) => ({ ...prev, apiKey: e.target.value }))
+                          }
+                          placeholder={`Enter ${llmSettings.provider} API key...`}
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          {llmSettings.provider === 'anthropic' && (
+                            <>
+                              Get your key from{' '}
+                              <a
+                                href="https://console.anthropic.com/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                console.anthropic.com
+                              </a>
+                            </>
+                          )}
+                          {llmSettings.provider === 'openai' && (
+                            <>
+                              Get your key from{' '}
+                              <a
+                                href="https://platform.openai.com/api-keys"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                platform.openai.com
+                              </a>
+                            </>
+                          )}
+                          {llmSettings.provider === 'gemini' && (
+                            <>
+                              Get your key from{' '}
+                              <a
+                                href="https://aistudio.google.com/app/apikey"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                Google AI Studio
+                              </a>
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    )}
+
+                    {llmSettings.provider === 'lmstudio' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          Server Base URL
+                        </label>
+                        <input
+                          type="text"
+                          className={STYLES.input}
+                          value={llmSettings.baseUrl}
+                          onChange={(e) =>
+                            setLlmSettings((prev) => ({ ...prev, baseUrl: e.target.value }))
+                          }
+                          placeholder="http://localhost:1234/v1"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          OpenAI-compatible API endpoint (LM Studio, Ollama, text-generation-webui,
+                          etc.)
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <button
+                        className={STYLES.btnSuccess}
+                        onClick={handleTestLLMConnection}
+                        disabled={llmTestResult?.testing}
+                      >
+                        {llmTestResult?.testing ? 'Testing...' : 'Test Connection'}
+                      </button>
+                      <button
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
+                        onClick={handleSaveLLMSettings}
+                      >
+                        Save Settings
+                      </button>
+                    </div>
+
+                    {llmTestResult && !llmTestResult.testing && (
+                      <div
+                        className={`px-4 py-2 rounded-lg ${
+                          llmTestResult.success
+                            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                            : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                        }`}
+                      >
+                        {llmTestResult.success ? '✓' : '✗'}{' '}
+                        {llmTestResult.message || llmTestResult.error}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Advanced Settings - LLM */}
-        <div className="bg-gray-100 dark:bg-gray-800 rounded-lg mb-6">
-          <button
-            className="w-full px-6 py-4 flex justify-between items-center text-left hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors rounded-lg"
-            onClick={() => setShowLlmSettings(!showLlmSettings)}
-          >
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              4. Advanced: AI Lyrics Correction (Optional)
-            </h3>
-            <span className="text-gray-500">{showLlmSettings ? '▼' : '▶'}</span>
-          </button>
+        {/* Create Sub-tab */}
+        {activeSubTab === 'create' && (
+          <>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
+              Create Stems+Karaoke File
+            </h2>
 
-          {showLlmSettings && (
-            <div className="px-6 pb-6 space-y-4">
-              <div className="flex items-center mb-4">
-                <input
-                  type="checkbox"
-                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  checked={llmSettings.enabled}
-                  onChange={(e) =>
-                    setLlmSettings((prev) => ({ ...prev, enabled: e.target.checked }))
-                  }
-                />
-                <label className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-                  Use AI to improve lyrics accuracy (compares Whisper output to reference lyrics)
-                </label>
-              </div>
+            {/* File Selection */}
+            <div className={`${STYLES.card} mb-6`}>
+              <h3 className={STYLES.sectionTitle}>1. Select Audio File</h3>
 
-              {llmSettings.enabled && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      AI Provider
-                    </label>
-                    <select
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                      value={llmSettings.provider}
-                      onChange={(e) =>
-                        setLlmSettings((prev) => ({ ...prev, provider: e.target.value }))
-                      }
-                    >
-                      <option value="anthropic">Anthropic Claude</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="gemini">Google Gemini</option>
-                      <option value="lmstudio">Local LLM Server (LM Studio, Ollama, etc.)</option>
-                    </select>
+              {fileLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Spinner size="sm" message="Reading file info & searching lyrics..." />
+                </div>
+              ) : selectedFile ? (
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-gray-900 dark:text-white font-medium truncate">
+                      {selectedFile.name}
+                    </p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      {formatDuration(selectedFile.duration)} •{' '}
+                      {selectedFile.codec?.toUpperCase() || 'Unknown'}{' '}
+                      {selectedFile.isVideo && '• Video'}
+                    </p>
                   </div>
+                  <button
+                    className="ml-4 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors"
+                    onClick={handleSelectFile}
+                  >
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="w-full px-6 py-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-blue-500 dark:hover:border-blue-400 transition-colors"
+                  onClick={handleSelectFile}
+                >
+                  <div className="text-gray-600 dark:text-gray-400">
+                    <div className="text-3xl mb-2">🎵</div>
+                    <p>Click to select an audio or video file</p>
+                    <p className="text-sm mt-1">
+                      MP3, WAV, FLAC, OGG, M4A, MP4, MKV, AVI, MOV, WEBM
+                    </p>
+                  </div>
+                </button>
+              )}
+            </div>
 
-                  {llmSettings.provider !== 'lmstudio' && (
+            {/* Song Info */}
+            <div className={`${STYLES.card} mb-6`}>
+              <h3 className={STYLES.sectionTitle}>2. Song Information</h3>
+
+              {fileLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Spinner size="sm" message="Loading song metadata..." />
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-4 mb-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        API Key
-                      </label>
-                      <input
-                        type="password"
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                        value={llmSettings.apiKey}
-                        onChange={(e) =>
-                          setLlmSettings((prev) => ({ ...prev, apiKey: e.target.value }))
-                        }
-                        placeholder={`Enter ${llmSettings.provider} API key...`}
-                      />
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        {llmSettings.provider === 'anthropic' && (
-                          <>
-                            Get your key from{' '}
-                            <a
-                              href="https://console.anthropic.com/"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 dark:text-blue-400 hover:underline"
-                            >
-                              console.anthropic.com
-                            </a>
-                          </>
-                        )}
-                        {llmSettings.provider === 'openai' && (
-                          <>
-                            Get your key from{' '}
-                            <a
-                              href="https://platform.openai.com/api-keys"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 dark:text-blue-400 hover:underline"
-                            >
-                              platform.openai.com
-                            </a>
-                          </>
-                        )}
-                        {llmSettings.provider === 'gemini' && (
-                          <>
-                            Get your key from{' '}
-                            <a
-                              href="https://aistudio.google.com/app/apikey"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 dark:text-blue-400 hover:underline"
-                            >
-                              Google AI Studio
-                            </a>
-                          </>
-                        )}
-                      </p>
-                    </div>
-                  )}
-
-                  {llmSettings.provider === 'lmstudio' && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Server Base URL
+                        Title
                       </label>
                       <input
                         type="text"
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                        value={llmSettings.baseUrl}
-                        onChange={(e) =>
-                          setLlmSettings((prev) => ({ ...prev, baseUrl: e.target.value }))
-                        }
-                        placeholder="http://localhost:1234/v1"
+                        className={STYLES.input}
+                        value={options.title}
+                        onChange={(e) => setOptions((prev) => ({ ...prev, title: e.target.value }))}
+                        placeholder="Song title"
                       />
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        OpenAI-compatible API endpoint (LM Studio, Ollama, text-generation-webui,
-                        etc.)
-                      </p>
                     </div>
-                  )}
-
-                  <div className="flex gap-2">
-                    <button
-                      className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
-                      onClick={handleTestLLMConnection}
-                      disabled={llmTestResult?.testing}
-                    >
-                      {llmTestResult?.testing ? 'Testing...' : 'Test Connection'}
-                    </button>
-                    <button
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
-                      onClick={handleSaveLLMSettings}
-                    >
-                      Save Settings
-                    </button>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Artist
+                      </label>
+                      <input
+                        type="text"
+                        className={STYLES.input}
+                        value={options.artist}
+                        onChange={(e) =>
+                          setOptions((prev) => ({ ...prev, artist: e.target.value }))
+                        }
+                        placeholder="Artist name"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Language
+                      </label>
+                      <PortalSelect
+                        value={options.language}
+                        onChange={(e) =>
+                          setOptions((prev) => ({ ...prev, language: e.target.value }))
+                        }
+                        options={[
+                          { value: 'en', label: 'English' },
+                          { value: 'es', label: 'Spanish' },
+                          { value: 'fr', label: 'French' },
+                          { value: 'de', label: 'German' },
+                          { value: 'it', label: 'Italian' },
+                          { value: 'pt', label: 'Portuguese' },
+                          { value: 'ja', label: 'Japanese' },
+                          { value: 'ko', label: 'Korean' },
+                          { value: 'zh', label: 'Chinese' },
+                        ]}
+                      />
+                    </div>
                   </div>
 
-                  {llmTestResult && !llmTestResult.testing && (
-                    <div
-                      className={`px-4 py-2 rounded-lg ${
-                        llmTestResult.success
-                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                          : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
-                      }`}
-                    >
-                      {llmTestResult.success ? '✓' : '✗'}{' '}
-                      {llmTestResult.message || llmTestResult.error}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Reference Lyrics (optional)
+                      </label>
+                      <button
+                        className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                        onClick={handleSearchLyrics}
+                      >
+                        Search LRCLIB
+                      </button>
                     </div>
-                  )}
+                    <textarea
+                      className={`${STYLES.input} h-24 resize-none`}
+                      value={options.referenceLyrics}
+                      onChange={(e) =>
+                        setOptions((prev) => ({ ...prev, referenceLyrics: e.target.value }))
+                      }
+                      placeholder="Paste lyrics here to improve transcription accuracy..."
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Reference lyrics help Whisper recognize song-specific vocabulary
+                    </p>
+                  </div>
                 </>
               )}
             </div>
-          )}
-        </div>
 
-        {/* Create Button */}
-        <div className="text-center">
-          <button
-            className="px-8 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-bold text-lg rounded-lg transition-colors"
-            onClick={handleStartConversion}
-            disabled={!selectedFile}
-          >
-            Create Stems+Karaoke File ⚡
-          </button>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-3">
-            Processing time depends on song length and your hardware (typically 2-10 minutes)
-          </p>
-        </div>
+            {/* Create Button */}
+            <div className="text-center">
+              <button
+                className="px-8 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-bold text-lg rounded-lg transition-colors"
+                onClick={handleStartConversion}
+                disabled={!selectedFile}
+              >
+                Create Stems+Karaoke File
+              </button>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-3">
+                Processing time depends on song length and your hardware (typically 2-10 minutes)
+              </p>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { LLM_DEFAULTS } from '../../shared/defaults.js';
 
 /**
  * Get LLM provider instance based on settings
@@ -299,16 +300,17 @@ function parseCorrection(llmResponse, originalOutput) {
 
 /**
  * Get LLM settings from app settings
+ * Uses unified defaults from shared/defaults.js
  */
 export function getLLMSettings(settingsManager) {
   const llmConfig = settingsManager.get('creator.llm', {});
 
   return {
-    enabled: llmConfig.enabled !== false, // Default to enabled
-    provider: llmConfig.provider || 'anthropic',
+    enabled: llmConfig.enabled ?? LLM_DEFAULTS.enabled,
+    provider: llmConfig.provider || LLM_DEFAULTS.provider,
     model: llmConfig.model || getDefaultModel(llmConfig.provider),
-    apiKey: llmConfig.apiKey || '',
-    baseUrl: llmConfig.baseUrl || 'http://localhost:1234/v1',
+    apiKey: llmConfig.apiKey || LLM_DEFAULTS.apiKey,
+    baseUrl: llmConfig.baseUrl || LLM_DEFAULTS.baseUrl,
   };
 }
 

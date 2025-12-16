@@ -47,12 +47,21 @@ export function getPythonPath() {
 
 /**
  * Get environment variables for Python processes
+ * Includes cached FFmpeg in PATH so Python scripts can find it
  */
 export function getPythonEnv() {
   const cacheDir = getCacheDir();
+  const binDir = join(cacheDir, 'bin');
+
+  // Prepend our bin directory to PATH so cached ffmpeg/ffprobe are found
+  const pathSep = platform() === 'win32' ? ';' : ':';
+  const existingPath = process.env.PATH || process.env.Path || '';
+  const newPath = `${binDir}${pathSep}${existingPath}`;
 
   return {
     ...process.env,
+    PATH: newPath,
+    Path: newPath, // Windows uses 'Path'
     TORCH_HOME: join(cacheDir, 'models', 'torch'),
     HF_HOME: join(cacheDir, 'models', 'huggingface'),
     XDG_CACHE_HOME: cacheDir, // For whisper model cache
@@ -258,32 +267,79 @@ export function getFFmpegPath() {
 }
 
 /**
- * Check FFmpeg availability
+ * Check FFmpeg and FFprobe availability
+ * Both binaries are required for Creator functionality
  */
 export function checkFFmpeg() {
+  const plat = platform();
+  const cacheDir = getCacheDir();
+  const ffmpegFilename = plat === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const ffprobeFilename = plat === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+
+  let ffmpegFound = false;
+  let ffprobeFound = false;
+  let source = null;
+  let version = null;
+
   // Check system PATH first
   if (checkSystemCommand('ffmpeg')) {
+    ffmpegFound = true;
+    source = 'system';
     try {
       const output = execSync('ffmpeg -version', { encoding: 'utf8', timeout: 5000 });
       const versionMatch = output.match(/ffmpeg version (\S+)/);
-      const version = versionMatch ? versionMatch[1] : 'unknown';
-      return { installed: true, version, source: 'system' };
+      version = versionMatch ? versionMatch[1] : 'unknown';
     } catch {
-      return { installed: true, source: 'system' };
+      // Version check failed but ffmpeg exists
     }
   }
 
-  // Check cache directory
-  const cacheDir = getCacheDir();
-  const plat = platform();
-  const filename = plat === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  const ffmpegPath = join(cacheDir, 'bin', filename);
-
-  if (existsSync(ffmpegPath)) {
-    return { installed: true, source: 'cached', path: ffmpegPath };
+  if (checkSystemCommand('ffprobe')) {
+    ffprobeFound = true;
   }
 
-  return { installed: false };
+  // If both found in system, we're good
+  if (ffmpegFound && ffprobeFound) {
+    return { installed: true, version, source: 'system' };
+  }
+
+  // Check cache directory for missing binaries
+  const cachedFfmpegPath = join(cacheDir, 'bin', ffmpegFilename);
+  const cachedFfprobePath = join(cacheDir, 'bin', ffprobeFilename);
+
+  if (!ffmpegFound && existsSync(cachedFfmpegPath)) {
+    ffmpegFound = true;
+    source = 'cached';
+  }
+
+  if (!ffprobeFound && existsSync(cachedFfprobePath)) {
+    ffprobeFound = true;
+    source = source || 'cached';
+  }
+
+  // Both must be available
+  if (ffmpegFound && ffprobeFound) {
+    return {
+      installed: true,
+      version,
+      source,
+      ffmpegPath: cachedFfmpegPath,
+      ffprobePath: cachedFfprobePath,
+    };
+  }
+
+  // Report which is missing
+  return {
+    installed: false,
+    ffmpegFound,
+    ffprobeFound,
+    reason:
+      !ffmpegFound && !ffprobeFound
+        ? 'both_missing'
+        : !ffmpegFound
+          ? 'ffmpeg_missing'
+          : 'ffprobe_missing',
+  };
 }
 
 /**

@@ -130,6 +130,8 @@ function downloadFile(url, destPath, onProgress = null) {
 
       const fileStream = createWriteStream(destPath);
 
+      let lastCallbackPercent = -1;
+
       response.on('data', (chunk) => {
         downloadedBytes += chunk.length;
         if (onProgress && totalBytes > 0) {
@@ -143,7 +145,11 @@ function downloadFile(url, destPath, onProgress = null) {
             lastLoggedPercent = percent;
           }
 
-          onProgress(percent, downloadedBytes, totalBytes);
+          // Only call onProgress when percent actually changes (avoid flooding IPC)
+          if (percent !== lastCallbackPercent) {
+            lastCallbackPercent = percent;
+            onProgress(percent, downloadedBytes, totalBytes);
+          }
         }
       });
 
@@ -519,25 +525,121 @@ export async function downloadCrepe(onProgress = null) {
   }
 }
 
+// Whisper model URLs from https://github.com/openai/whisper/blob/main/whisper/__init__.py
+const WHISPER_MODELS = {
+  tiny: 'https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt',
+  base: 'https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt',
+  small:
+    'https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt',
+  medium:
+    'https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt',
+  'large-v1':
+    'https://openaipublic.azureedge.net/main/whisper/models/e4b87e7e0bf463eb8e6956e646f1e277e901512310def2c24bf0e11bd3c28e9a/large-v1.pt',
+  'large-v2':
+    'https://openaipublic.azureedge.net/main/whisper/models/81f7c96c852ee8fc832187b0132e569d6c3065a3252ed18e56effd0b6a73e524/large-v2.pt',
+  'large-v3':
+    'https://openaipublic.azureedge.net/main/whisper/models/e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/large-v3.pt',
+  'large-v3-turbo':
+    'https://openaipublic.azureedge.net/main/whisper/models/aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt',
+};
+
+// Model sizes for progress display
+const WHISPER_MODEL_SIZES = {
+  tiny: '~75 MB',
+  base: '~145 MB',
+  small: '~465 MB',
+  medium: '~1.5 GB',
+  'large-v1': '~3 GB',
+  'large-v2': '~3 GB',
+  'large-v3': '~3 GB',
+  'large-v3-turbo': '~1.6 GB',
+};
+
 /**
- * Download Whisper model by running a test load
+ * Download Whisper model directly with progress, then verify
  */
-export function downloadWhisperModel(modelName = 'large-v3-turbo', onProgress = null) {
+export async function downloadWhisperModel(modelName = 'large-v3-turbo', onProgress = null) {
   const pythonPath = getPythonPath();
 
   if (!existsSync(pythonPath)) {
-    return Promise.resolve({ success: false, error: 'Python not installed' });
+    return { success: false, error: 'Python not installed' };
   }
 
-  return new Promise((resolve) => {
-    if (onProgress) onProgress('downloading', `Downloading Whisper ${modelName} model...`);
+  const modelUrl = WHISPER_MODELS[modelName];
+  if (!modelUrl) {
+    return { success: false, error: `Unknown model: ${modelName}` };
+  }
 
+  const modelSize = WHISPER_MODEL_SIZES[modelName] || 'unknown size';
+
+  // Whisper stores models in ~/.cache/whisper/ (we use XDG_CACHE_HOME from getPythonEnv)
+  const cacheDir = getCacheDir();
+  const whisperCacheDir = join(cacheDir, 'whisper');
+  const modelPath = join(whisperCacheDir, `${modelName}.pt`);
+
+  // Check if model already exists
+  if (existsSync(modelPath)) {
+    if (onProgress) onProgress('complete', `${modelName} model already downloaded`);
+    return { success: true, model: modelName, cached: true };
+  }
+
+  // Ensure whisper cache directory exists
+  if (!existsSync(whisperCacheDir)) {
+    mkdirSync(whisperCacheDir, { recursive: true });
+  }
+
+  try {
+    // Download with progress
+    if (onProgress)
+      onProgress('downloading', `Downloading ${modelName} model (${modelSize})... 0%`);
+
+    await downloadFile(modelUrl, modelPath, (percent) => {
+      if (onProgress) {
+        onProgress('downloading', `Downloading ${modelName} model (${modelSize})... ${percent}%`);
+      }
+    });
+
+    if (onProgress) onProgress('downloading', `Verifying ${modelName} model...`);
+
+    // Verify the model loads correctly
+    const verifyResult = await verifyWhisperModel(modelName);
+    if (!verifyResult.success) {
+      // Delete corrupted download
+      try {
+        rmSync(modelPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+      return { success: false, error: verifyResult.error };
+    }
+
+    if (onProgress) onProgress('complete', `${modelName} model ready`);
+    return { success: true, model: modelName };
+  } catch (error) {
+    // Clean up partial download
+    try {
+      if (existsSync(modelPath)) {
+        rmSync(modelPath);
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Verify a Whisper model loads correctly
+ */
+function verifyWhisperModel(modelName) {
+  const pythonPath = getPythonPath();
+
+  return new Promise((resolve) => {
     const script = `
 import sys
 import json
 try:
     import whisper
-    print("Loading model...", file=sys.stderr)
     model = whisper.load_model("${modelName}")
     print(json.dumps({"success": True}))
 except Exception as e:
@@ -554,24 +656,12 @@ except Exception as e:
       stdout += data.toString();
     });
 
-    proc.stderr.on('data', (data) => {
-      // Whisper prints download progress to stderr
-      if (onProgress) {
-        onProgress('downloading', data.toString().trim().slice(0, 100));
-      }
-    });
-
     proc.on('close', () => {
       try {
         const result = JSON.parse(stdout.trim());
-        if (result.success) {
-          if (onProgress) onProgress('complete', `${modelName} model ready`);
-          resolve({ success: true, model: modelName });
-        } else {
-          resolve({ success: false, error: result.error });
-        }
+        resolve(result);
       } catch {
-        resolve({ success: false, error: 'Failed to parse output' });
+        resolve({ success: false, error: 'Failed to verify model' });
       }
     });
 
@@ -592,7 +682,7 @@ export function downloadDemucsModel(modelName = 'htdemucs_ft', onProgress = null
   }
 
   return new Promise((resolve) => {
-    if (onProgress) onProgress('downloading', `Downloading Demucs ${modelName} model...`);
+    if (onProgress) onProgress('downloading', `Downloading Demucs ${modelName} model (~300 MB)...`);
 
     const script = `
 import sys
@@ -600,8 +690,10 @@ import json
 try:
     old_stdout = sys.stdout
     sys.stdout = sys.stderr
+    print("STATUS:Downloading model...", file=sys.stderr)
     from demucs.pretrained import get_model
     model = get_model("${modelName}")
+    print("STATUS:Model loaded successfully", file=sys.stderr)
     sys.stdout = old_stdout
     print(json.dumps({"success": True}))
 except Exception as e:
@@ -620,8 +712,22 @@ except Exception as e:
     });
 
     proc.stderr.on('data', (data) => {
+      const line = data.toString().trim();
+      if (!line) return;
+
       if (onProgress) {
-        onProgress('downloading', data.toString().trim().slice(0, 100));
+        // Check for our custom status messages
+        if (line.startsWith('STATUS:')) {
+          onProgress('downloading', line.replace('STATUS:', ''));
+        } else if (line.includes('%|')) {
+          // tqdm progress bar - extract percentage
+          const match = line.match(/(\d+)%\|/);
+          if (match) {
+            onProgress('downloading', `Downloading model... ${match[1]}%`);
+          }
+        } else if (line.includes('Downloading') || line.includes('downloading')) {
+          onProgress('downloading', line.slice(0, 80));
+        }
       }
     });
 
@@ -660,39 +766,62 @@ export async function downloadFFmpeg(onProgress = null) {
   }
 
   const plat = process.platform;
-  const binaryName = plat === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  const binaryPath = join(binDir, binaryName);
+  const ffmpegName = plat === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const ffprobeName = plat === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+  const ffmpegPath = join(binDir, ffmpegName);
+  const ffprobePath = join(binDir, ffprobeName);
   console.log(`   Platform: ${plat}`);
-  console.log(`   Binary path: ${binaryPath}`);
+  console.log(`   FFmpeg path: ${ffmpegPath}`);
+  console.log(`   FFprobe path: ${ffprobePath}`);
 
-  // Check if already exists
-  if (existsSync(binaryPath)) {
-    console.log('✅ FFmpeg already installed');
+  // Check if both already exist
+  if (existsSync(ffmpegPath) && existsSync(ffprobePath)) {
+    console.log('✅ FFmpeg and FFprobe already installed');
     if (onProgress) onProgress('complete', 'FFmpeg already downloaded');
-    return { success: true, path: binaryPath };
+    return { success: true, ffmpegPath, ffprobePath };
   }
 
   try {
+    // URLs for ffmpeg builds that include both ffmpeg and ffprobe
     let url;
+    let ffprobeUrl = null; // macOS needs separate download for ffprobe
     if (plat === 'darwin') {
+      // evermeet.cx provides separate downloads for ffmpeg and ffprobe on macOS
       url = 'https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip';
+      ffprobeUrl = 'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip';
     } else if (plat === 'win32') {
+      // BtbN builds include both ffmpeg and ffprobe
       url =
         'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
     } else {
+      // John Van Sickle builds include both ffmpeg and ffprobe
       url = 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz';
     }
     console.log(`🌐 FFmpeg download URL: ${url}`);
+    if (ffprobeUrl) {
+      console.log(`🌐 FFprobe download URL: ${ffprobeUrl}`);
+    }
 
     const archivePath = join(binDir, plat === 'linux' ? 'ffmpeg.tar.xz' : 'ffmpeg.zip');
     console.log(`   Archive path: ${archivePath}`);
 
-    // Download
+    // Download ffmpeg
     console.log('📥 Starting FFmpeg download...');
     if (onProgress) onProgress('downloading', 'Downloading FFmpeg...');
     await downloadFile(url, archivePath, (percent) => {
       if (onProgress) onProgress('downloading', `Downloading FFmpeg... ${percent}%`);
     });
+
+    // Download ffprobe separately if needed (macOS)
+    let ffprobeArchivePath = null;
+    if (ffprobeUrl) {
+      ffprobeArchivePath = join(binDir, 'ffprobe.zip');
+      console.log('📥 Starting FFprobe download...');
+      if (onProgress) onProgress('downloading', 'Downloading FFprobe...');
+      await downloadFile(ffprobeUrl, ffprobeArchivePath, (percent) => {
+        if (onProgress) onProgress('downloading', `Downloading FFprobe... ${percent}%`);
+      });
+    }
 
     // Extract
     console.log('📦 Extracting FFmpeg...');
@@ -714,7 +843,7 @@ export async function downloadFFmpeg(onProgress = null) {
       }
       console.log('   Extraction complete, searching for binary...');
 
-      // Find ffmpeg binary recursively
+      // Find binary recursively by name
       const findBinary = (dir, name) => {
         const files = readdirSync(dir);
         for (const file of files) {
@@ -733,21 +862,60 @@ export async function downloadFFmpeg(onProgress = null) {
         return null;
       };
 
-      const ffmpegFound = findBinary(tempDir, binaryName);
+      // Extract both ffmpeg and ffprobe
+      const ffmpegName = plat === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+      const ffprobeName = plat === 'win32' ? 'ffprobe.exe' : 'ffprobe';
+
+      const ffmpegFound = findBinary(tempDir, ffmpegName);
+      const ffprobeFound = findBinary(tempDir, ffprobeName);
+
       if (ffmpegFound) {
-        console.log(`   Found binary: ${ffmpegFound}`);
-        console.log(`   Copying to: ${binaryPath}`);
-        copyFileSync(ffmpegFound, binaryPath);
+        const ffmpegDest = join(binDir, ffmpegName);
+        console.log(`   Found ffmpeg: ${ffmpegFound}`);
+        console.log(`   Copying to: ${ffmpegDest}`);
+        copyFileSync(ffmpegFound, ffmpegDest);
         if (plat !== 'win32') {
-          console.log('   Setting executable permissions...');
-          chmodSync(binaryPath, 0o755);
+          chmodSync(ffmpegDest, 0o755);
         }
-        console.log('✅ FFmpeg binary installed');
+        console.log('✅ ffmpeg binary installed');
       } else {
-        console.error('❌ FFmpeg binary not found in archive');
+        console.error('❌ ffmpeg binary not found in archive');
         console.error(`   Searched in: ${tempDir}`);
-        console.error(`   Looking for: ${binaryName}`);
-        throw new Error('FFmpeg binary not found in archive');
+        throw new Error('ffmpeg binary not found in archive');
+      }
+
+      if (ffprobeFound) {
+        console.log(`   Found ffprobe: ${ffprobeFound}`);
+        console.log(`   Copying to: ${ffprobePath}`);
+        copyFileSync(ffprobeFound, ffprobePath);
+        if (plat !== 'win32') {
+          chmodSync(ffprobePath, 0o755);
+        }
+        console.log('✅ ffprobe binary installed');
+      } else if (ffprobeArchivePath) {
+        // macOS: Extract ffprobe from separate archive
+        console.log('📦 Extracting FFprobe from separate archive...');
+        const ffprobeTempDir = mkdtempSync(join(tmpdir(), 'ffprobe-'));
+        try {
+          execSync(`unzip -q "${ffprobeArchivePath}" -d "${ffprobeTempDir}"`);
+          const ffprobeExtracted = findBinary(ffprobeTempDir, ffprobeName);
+          if (ffprobeExtracted) {
+            console.log(`   Found ffprobe: ${ffprobeExtracted}`);
+            console.log(`   Copying to: ${ffprobePath}`);
+            copyFileSync(ffprobeExtracted, ffprobePath);
+            chmodSync(ffprobePath, 0o755);
+            console.log('✅ ffprobe binary installed');
+          } else {
+            console.warn('⚠️ ffprobe not found in separate archive');
+          }
+          rmSync(ffprobeTempDir, { recursive: true, force: true });
+          rmSync(ffprobeArchivePath, { force: true });
+        } catch (ffprobeError) {
+          console.warn('⚠️ Failed to extract ffprobe:', ffprobeError.message);
+          rmSync(ffprobeTempDir, { recursive: true, force: true });
+        }
+      } else {
+        console.warn('⚠️ ffprobe binary not found in archive');
       }
 
       // Clean up
@@ -757,7 +925,7 @@ export async function downloadFFmpeg(onProgress = null) {
 
       console.log('✅ FFmpeg installation complete');
       if (onProgress) onProgress('complete', 'FFmpeg installed');
-      return { success: true, path: binaryPath };
+      return { success: true, ffmpegPath, ffprobePath };
     } catch (extractError) {
       console.error('❌ FFmpeg extraction failed');
       console.error('Error:', extractError);
@@ -801,6 +969,7 @@ export async function installAllComponents(onProgress = null) {
     {
       name: 'whisperModel',
       label: 'Whisper Model',
+      action: 'Downloading', // Custom action word instead of "Installing"
       fn: () => downloadWhisperModel('large-v3-turbo'),
       weight: 15,
       size: '~1.5 GB',
@@ -808,6 +977,7 @@ export async function installAllComponents(onProgress = null) {
     {
       name: 'demucsModel',
       label: 'Demucs Model',
+      action: 'Downloading', // Custom action word instead of "Installing"
       fn: () => downloadDemucsModel('htdemucs_ft'),
       weight: 15,
       size: '~300 MB',
@@ -826,14 +996,15 @@ export async function installAllComponents(onProgress = null) {
     const step = steps[i];
     const stepNumber = i + 1;
     const totalSteps = steps.length;
+    const action = step.action || 'Installing';
 
-    console.log(`\n📦 [${stepNumber}/${totalSteps}] Installing ${step.label}...`);
+    console.log(`\n📦 [${stepNumber}/${totalSteps}] ${action} ${step.label}...`);
 
     if (onProgress) {
       const percent = Math.floor((completedWeight / totalWeight) * 100);
       onProgress(
         percent,
-        `[${stepNumber}/${totalSteps}] Installing ${step.label} (${step.size})...`
+        `[${stepNumber}/${totalSteps}] ${action} ${step.label} (${step.size})...`
       );
     }
 

@@ -19,6 +19,13 @@ import * as queueService from '../shared/services/queueService.js';
 import * as libraryService from '../shared/services/libraryService.js';
 import * as playerService from '../shared/services/playerService.js';
 import * as serverSettingsService from '../shared/services/serverSettingsService.js';
+import { checkFFmpeg } from './creator/systemChecker.js';
+import { downloadFFmpeg } from './creator/downloadManager.js';
+import {
+  initSettingsService,
+  loadAndSync,
+  getBroadcastChannel,
+} from '../shared/services/settingsService.js';
 
 console.log('📦 About to import registerAllHandlers...');
 import { registerAllHandlers } from './handlers/index.js';
@@ -159,6 +166,14 @@ class KaiPlayerApp {
     });
 
     await this.settings.load();
+
+    // Initialize unified settings service with broadcast function
+    initSettingsService(this.settings, this.appState, (key, value) =>
+      this.broadcastSettingChange(key, value)
+    );
+
+    // Load and sync settings to AppState
+    await loadAndSync();
 
     // Load persisted state (queue, mixer, effects)
     await this.statePersistence.load();
@@ -1161,6 +1176,7 @@ class KaiPlayerApp {
       album: null,
       genre: null,
       year: null,
+      key: null,
       duration: null,
       hasKaraoke: false,
       stems: [],
@@ -1178,6 +1194,17 @@ class KaiPlayerApp {
         metadata.genre = mmData.common.genre ? mmData.common.genre[0] : null;
         metadata.year =
           mmData.common.date || (mmData.common.year ? String(mmData.common.year) : null);
+        // Key can be in common.key or native tags as initialkey
+        metadata.key = mmData.common.key || null;
+      }
+      // Check native iTunes tags for initialkey if not found in common
+      if (!metadata.key && mmData.native?.['iTunes']) {
+        const keyTag = mmData.native['iTunes'].find(
+          (t) => t.id === '----:com.apple.iTunes:initialkey' || t.id === 'initialkey'
+        );
+        if (keyTag) {
+          metadata.key = keyTag.value;
+        }
       }
       if (mmData.format && mmData.format.duration) {
         metadata.duration = mmData.format.duration;
@@ -1568,6 +1595,39 @@ class KaiPlayerApp {
 
   async scanLibraryInBackground(songsFolder) {
     try {
+      // Check if FFmpeg is available (required for M4A files)
+      const ffmpegStatus = checkFFmpeg();
+      if (!ffmpegStatus.installed) {
+        console.log('⚠️ FFmpeg not found, downloading...');
+        this.sendToRenderer('library:scanProgress', {
+          current: 0,
+          total: 0,
+          message: 'Downloading FFmpeg (required for M4A files)...',
+        });
+
+        const result = await downloadFFmpeg((percent, msg) => {
+          this.sendToRenderer('library:scanProgress', {
+            current: 0,
+            total: 0,
+            message: msg || `Downloading FFmpeg... ${percent}%`,
+          });
+        });
+
+        if (!result.success) {
+          console.error('❌ FFmpeg download failed:', result.error);
+          this.sendToRenderer('library:scanProgress', {
+            current: 0,
+            total: 0,
+            message: `FFmpeg download failed: ${result.error}`,
+          });
+          // Continue anyway - will fail on M4A files but other formats may work
+        } else {
+          console.log('✅ FFmpeg downloaded successfully');
+        }
+      } else {
+        console.log(`✅ FFmpeg available (${ffmpegStatus.source || 'system'})`);
+      }
+
       // Try to load from cache first
       const cacheFile = path.join(app.getPath('userData'), 'library-cache.json');
       let useCache = false;
@@ -1794,6 +1854,7 @@ class KaiPlayerApp {
               album: metadata.album,
               genre: metadata.genre,
               year: metadata.year,
+              key: metadata.key,
               duration: metadata.duration,
               stems: metadata.stems,
               stemCount: metadata.stemCount,
@@ -2104,6 +2165,21 @@ class KaiPlayerApp {
     return files;
   }
 
+  /**
+   * Set songs folder and trigger auto-scan
+   * Called by promptForSongsFolder and libraryHandlers
+   */
+  async setSongsFolderAndScan(folder) {
+    this.settings.setSongsFolder(folder);
+    console.log('📁 Songs folder set to:', folder);
+
+    // Notify renderer about the new library
+    this.sendToRenderer('library:folderSet', folder);
+
+    // Auto-scan the library when folder is set or changed
+    this.scanLibraryInBackground(folder);
+  }
+
   async promptForSongsFolder() {
     const result = await dialog.showMessageBox(this.mainWindow, {
       type: 'info',
@@ -2121,12 +2197,7 @@ class KaiPlayerApp {
       });
 
       if (!folderResult.canceled && folderResult.filePaths.length > 0) {
-        const selectedFolder = folderResult.filePaths[0];
-        this.settings.setSongsFolder(selectedFolder);
-        console.log('📁 Songs folder set to:', selectedFolder);
-
-        // Notify renderer about the new library
-        this.sendToRenderer('library:folderSet', selectedFolder);
+        await this.setSongsFolderAndScan(folderResult.filePaths[0]);
       }
     }
   }
@@ -2162,6 +2233,25 @@ class KaiPlayerApp {
         resolve(null);
       }
     });
+  }
+
+  /**
+   * Broadcast a settings change to renderer and web clients
+   * @param {string} key - Settings key
+   * @param {*} value - Settings value
+   */
+  broadcastSettingChange(key, value) {
+    const channel = getBroadcastChannel(key);
+
+    // Send to renderer
+    this.sendToRenderer(channel, value);
+
+    // Send to web clients via Socket.IO
+    if (this.webServer?.io) {
+      this.webServer.io.emit(channel, value);
+    }
+
+    console.log(`📡 Settings broadcast: ${key} -> ${channel}`);
   }
 
   // Web Server Integration Methods

@@ -18,6 +18,7 @@ import { runDemucs, runWhisper, runCrepe } from './pythonRunner.js';
 import { prepareWhisperContext } from './lrclibService.js';
 import { buildStemM4a } from './stemBuilder.js';
 import * as llmService from './llmService.js';
+import { detectKey } from './keyDetection.js';
 
 // Active conversion state
 let conversionInProgress = false;
@@ -217,7 +218,9 @@ export async function runConversion(
     if (settingsManager && referenceLyrics) {
       try {
         const llmSettings = llmService.getLLMSettings(settingsManager);
-        if (llmSettings.enabled && llmSettings.apiKey) {
+        // Local LLM (lmstudio) doesn't require API key
+        const hasValidConfig = llmSettings.provider === 'lmstudio' || llmSettings.apiKey;
+        if (llmSettings.enabled && hasValidConfig) {
           onProgress('whisper', `[${STEPS.whisper}] 🤖 AI correction...`, 78);
           const llmResult = await llmService.correctLyrics(
             whisperResult,
@@ -259,12 +262,24 @@ export async function runConversion(
       );
 
       pitchData = crepeResult;
+
+      // Detect musical key from pitch data
+      if (pitchData?.pitch_data) {
+        const keyResult = detectKey(pitchData);
+        if (keyResult.key !== 'unknown') {
+          console.log(
+            `🎵 Detected key: ${keyResult.key} (confidence: ${(keyResult.confidence * 100).toFixed(0)}%)`
+          );
+          pitchData.detected_key = keyResult;
+        }
+      }
     }
 
     checkCancelled();
 
     // Step 6: Encode stems to AAC (90-95%)
     const stemLabels = {
+      master: '🎵 Master',
       vocals: '🎤 Vocals',
       drums: '🥁 Drums',
       bass: '🎸 Bass',
@@ -276,19 +291,31 @@ export async function runConversion(
     checkCancelled();
 
     const aacPaths = {};
-    const stemNames = Object.keys(stemPaths);
-    const encodeProgress = 5 / stemNames.length;
 
-    for (let i = 0; i < stemNames.length; i++) {
-      const stemName = stemNames[i];
+    // First encode the master (original mix) - required by NI Stems spec
+    const masterAacPath = join(tempDir, 'master.m4a');
+    onProgress('encode', `[${STEPS.encode}] Encoding ${stemLabels.master}...`, 90);
+    await encodeToAAC(wavPath, masterAacPath, { codec: 'aac', bitrate: '192k' });
+    aacPaths.master = masterAacPath;
+
+    checkCancelled();
+
+    // Then encode the individual stems in NI Stems order: drums, bass, other, vocals
+    const stemOrder = ['drums', 'bass', 'other', 'vocals'];
+    const encodeProgress = 4 / stemOrder.length;
+
+    for (let i = 0; i < stemOrder.length; i++) {
+      const stemName = stemOrder[i];
       const stemPath = stemPaths[stemName];
+      if (!stemPath) continue; // Skip if stem doesn't exist
+
       const aacPath = join(tempDir, `${stemName}.m4a`);
       const label = stemLabels[stemName] || stemName;
 
       onProgress(
         'encode',
         `[${STEPS.encode}] Encoding ${label}...`,
-        90 + Math.floor(i * encodeProgress)
+        91 + Math.floor(i * encodeProgress)
       );
       await encodeToAAC(stemPath, aacPath, { codec: 'aac', bitrate: '192k' });
       aacPaths[stemName] = aacPath;

@@ -483,11 +483,17 @@ export function LibraryPanel({ bridge, showSetFolder = false, showFullRefresh = 
               />
             </div>
             <div className="text-xs text-gray-700 dark:text-gray-300 text-center">
-              Scanning: {scanProgress.current} / {scanProgress.total} files (
-              {scanProgress.total > 0
-                ? Math.round((scanProgress.current / scanProgress.total) * 100)
-                : 0}
-              %)
+              {scanProgress.message ? (
+                scanProgress.message
+              ) : (
+                <>
+                  Scanning: {scanProgress.current} / {scanProgress.total} files (
+                  {scanProgress.total > 0
+                    ? Math.round((scanProgress.current / scanProgress.total) * 100)
+                    : 0}
+                  %)
+                </>
+              )}
             </div>
           </div>
         )}

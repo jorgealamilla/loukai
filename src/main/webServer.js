@@ -18,6 +18,8 @@ import * as preferencesService from '../shared/services/preferencesService.js';
 import * as effectsService from '../shared/services/effectsService.js';
 import * as mixerService from '../shared/services/mixerService.js';
 import * as requestsService from '../shared/services/requestsService.js';
+import { SERVER_DEFAULTS, WAVEFORM_DEFAULTS, AUTOTUNE_DEFAULTS } from '../shared/defaults.js';
+import { getSetting } from '../shared/services/settingsService.js';
 import * as serverSettingsService from '../shared/services/serverSettingsService.js';
 import * as creatorService from '../shared/services/creatorService.js';
 
@@ -33,18 +35,11 @@ class WebServer {
     this.io = null;
     this.port = 3069;
     this.songRequests = [];
-    this.defaultSettings = {
-      requireKJApproval: true,
-      allowSongRequests: true,
-      serverName: 'Loukai Karaoke',
-      port: 3069,
-      maxRequestsPerIP: 10,
-      showQrCode: true,
-      displayQueue: true,
-    };
+    // Use unified defaults from shared/defaults.js
+    this.defaultSettings = { ...SERVER_DEFAULTS };
 
     // Settings will be loaded after initialization in start() method
-    this.settings = { ...this.defaultSettings };
+    this.settings = { ...SERVER_DEFAULTS };
 
     // Fuzzy search instance - will be initialized when songs are loaded
     this.fuse = null;
@@ -1462,20 +1457,9 @@ class WebServer {
       try {
         const result = preferencesService.getPreferences(this.mainApp.appState);
         if (result.success) {
-          // Also load waveform and autotune preferences from settings
-          const waveformPreferences = await this.mainApp.settings.get('waveformPreferences', {
-            enableWaveforms: true,
-            enableEffects: true,
-            randomEffectOnSong: false,
-            showUpcomingLyrics: true,
-            overlayOpacity: 0.7,
-          });
-
-          const autoTunePreferences = await this.mainApp.settings.get('autoTunePreferences', {
-            enabled: false,
-            strength: 50,
-            speed: 20,
-          });
+          // Also load waveform and autotune preferences from settings (uses defaults from shared/defaults.js)
+          const waveformPreferences = getSetting('waveformPreferences', WAVEFORM_DEFAULTS);
+          const autoTunePreferences = getSetting('autoTunePreferences', AUTOTUNE_DEFAULTS);
 
           res.json({
             ...result.preferences,

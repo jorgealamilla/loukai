@@ -43,8 +43,11 @@ export async function buildStemM4a(options) {
   // Using -map to include multiple audio streams
   const args = [];
 
-  // Add input files
-  const stemNames = Object.keys(stems);
+  // NI Stems track order: master, drums, bass, other, vocals
+  const niStemOrder = ['master', 'drums', 'bass', 'other', 'vocals'];
+  const stemNames = niStemOrder.filter((name) => stems[name]);
+
+  // Add input files in correct order
   for (const name of stemNames) {
     args.push('-i', stems[name]);
   }
@@ -75,6 +78,7 @@ export async function buildStemM4a(options) {
     language: tags.language,
     lyrics: tags.lyrics || tags.unsyncedlyrics,
     bpm: tags.bpm || tags.tbpm,
+    initialkey: pitch?.detected_key?.key || tags.initialkey || tags.key,
     isrc: tags.isrc,
     barcode: tags.barcode,
     catalog: tags.catalog,
@@ -99,6 +103,11 @@ export async function buildStemM4a(options) {
   }
 
   args.push('-metadata', 'encoder=Loukai Creator');
+
+  // Log key if detected
+  if (pitch?.detected_key?.key) {
+    console.log(`🎵 Writing key to metadata: ${pitch.detected_key.key}`);
+  }
 
   // Copy codecs (stems are already AAC)
   args.push('-c', 'copy');
@@ -170,10 +179,10 @@ async function injectKaraokeAtoms(filePath, data) {
     }
   }
 
-  // Build audio sources from stems
+  // Build audio sources from stems (NI Stems format: master + 4 stems = 5 tracks)
   const audioSources = stems.map((stemName, index) => ({
     id: stemName,
-    role: stemName,
+    role: stemName === 'master' ? 'master' : stemName,
     track: index,
   }));
 
@@ -182,7 +191,7 @@ async function injectKaraokeAtoms(filePath, data) {
     // Audio configuration
     audio: {
       sources: audioSources,
-      profile: stems.length === 4 ? 'STEMS-4' : 'STEMS-2',
+      profile: 'STEMS-4', // NI Stems format (master + 4 stems)
       encoder_delay_samples: 0,
       presets: [],
     },
