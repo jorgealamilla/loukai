@@ -1829,20 +1829,23 @@ export class KaraokeRenderer {
    * Check if the current active line's singer has changed and notify via callback.
    * This is used for the backup:PA feature to route vocals to PA when needed.
    */
-  checkSingerChange(currentLineIndex) {
-    if (!this.onSingerChange) return;
+  checkSingerChange() {
+    if (!this.onSingerChange || !this.lyrics) return;
 
-    // Determine current singer from active line
+    // Find ANY line we're currently in (including backup lines)
+    // This is different from findCurrentMainLine which excludes backup
     let currentSinger = null;
-    if (currentLineIndex >= 0 && currentLineIndex < this.lyrics.length) {
-      const line = this.lyrics[currentLineIndex];
-      // Only track singer for lines we're currently within (not gaps)
+    for (let i = 0; i < this.lyrics.length; i++) {
+      const line = this.lyrics[i];
       if (this.currentTime >= line.startTime && this.currentTime <= line.endTime) {
-        currentSinger = line.singer || null;
+        if (line.singer) {
+          currentSinger = line.singer;
+          break; // Use first matching line with singer
+        }
       }
     }
 
-    // Check if singer has changed
+    // Trigger callback when singer changes
     if (currentSinger !== this.lastActiveSinger) {
       this.lastActiveSinger = currentSinger;
       this.onSingerChange(currentSinger);
@@ -2958,6 +2961,7 @@ export class KaraokeRenderer {
     this.cachedCurrentLine = -1;
     this.lastTimeForLineCalculation = -1;
     this.backupAnimations.clear();
+    this.lastActiveSinger = null; // Reset for backup:PA feature
 
     // Restore preferences
     this.waveformPreferences = currentPreferences;

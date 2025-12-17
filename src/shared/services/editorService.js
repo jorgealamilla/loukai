@@ -252,6 +252,7 @@ async function saveM4ASong(path, updates) {
       end: line.end || line.endTimeSec || 0,
       text: line.text || '',
       ...(line.disabled && { disabled: true }),
+      ...(line.singer && { singer: line.singer }),
     })),
 
     // Optional: vocal pitch data

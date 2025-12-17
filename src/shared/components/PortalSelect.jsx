@@ -25,10 +25,13 @@ export function PortalSelect({
   className = '',
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0, width: 0 });
+  const [position, setPosition] = useState({ top: 0, left: 0, minWidth: 0, openUpward: false });
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const triggerRef = useRef(null);
   const dropdownRef = useRef(null);
+
+  // Estimated dropdown height for positioning calculation
+  const DROPDOWN_MAX_HEIGHT = 240; // matches max-h-60 (15rem = 240px)
 
   // Find the selected option's label
   const selectedOption = options.find((opt) => opt.value === value);
@@ -41,13 +44,22 @@ export function PortalSelect({
   const updatePosition = useCallback(() => {
     if (triggerRef.current) {
       const rect = triggerRef.current.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      const spaceBelow = viewportHeight - rect.bottom;
+      const spaceAbove = rect.top;
+
+      // Determine if we should open upward
+      const estimatedHeight = Math.min(options.length * 40, DROPDOWN_MAX_HEIGHT);
+      const openUpward = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+
       setPosition({
-        top: rect.bottom + 2,
+        top: openUpward ? rect.top - 2 : rect.bottom + 2,
         left: rect.left,
-        width: rect.width,
+        minWidth: rect.width,
+        openUpward,
       });
     }
-  }, []);
+  }, [options.length]);
 
   useEffect(() => {
     if (isOpen) {
@@ -194,9 +206,10 @@ export function PortalSelect({
             ref={dropdownRef}
             className="fixed z-[9999] bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded shadow-lg max-h-60 overflow-y-auto"
             style={{
-              top: position.top,
-              left: position.left,
-              width: position.width,
+              ...(position.openUpward
+                ? { bottom: window.innerHeight - position.top, left: position.left }
+                : { top: position.top, left: position.left }),
+              minWidth: position.minWidth,
             }}
             role="listbox"
             onKeyDown={handleKeyDown}
@@ -204,7 +217,7 @@ export function PortalSelect({
             {options.map((option, index) => (
               <div
                 key={option.value}
-                className={`px-3 py-2 cursor-pointer transition-colors ${
+                className={`px-3 py-2 cursor-pointer transition-colors whitespace-nowrap ${
                   index === focusedIndex
                     ? 'bg-blue-500 text-white'
                     : option.value === value

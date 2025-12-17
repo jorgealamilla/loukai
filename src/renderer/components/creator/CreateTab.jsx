@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { LLM_DEFAULTS } from '../../../shared/defaults.js';
+import { LLM_DEFAULTS, CREATOR_DEFAULTS } from '../../../shared/defaults.js';
 import { PortalSelect } from '../PortalSelect.jsx';
 
 // ============================================================================
@@ -143,8 +143,8 @@ export function CreateTab({ bridge: _bridge }) {
 
   // Output settings
   const [outputToSongsFolder, setOutputToSongsFolder] = useState(false);
-  const [whisperModel, setWhisperModel] = useState('large-v3-turbo');
-  const [enableCrepe, setEnableCrepe] = useState(true);
+  const [whisperModel, setWhisperModel] = useState(CREATOR_DEFAULTS.whisperModel);
+  const [enableCrepe, setEnableCrepe] = useState(CREATOR_DEFAULTS.enableCrepe);
 
   const checkComponents = useCallback(async () => {
     setStatus('checking');
@@ -198,10 +198,13 @@ export function CreateTab({ bridge: _bridge }) {
         setOutputToSongsFolder(outputToSongs);
         const whisper = await window.kaiAPI?.settings?.get(
           'creator.whisperModel',
-          'large-v3-turbo'
+          CREATOR_DEFAULTS.whisperModel
         );
         setWhisperModel(whisper);
-        const crepe = await window.kaiAPI?.settings?.get('creator.enableCrepe', true);
+        const crepe = await window.kaiAPI?.settings?.get(
+          'creator.enableCrepe',
+          CREATOR_DEFAULTS.enableCrepe
+        );
         setEnableCrepe(crepe);
       } catch (err) {
         console.error('Failed to load output settings:', err);
