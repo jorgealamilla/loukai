@@ -1112,18 +1112,23 @@ class KaiPlayerApp {
         metadata.duration = mmData.format.duration;
       }
 
-      // Check for kara atom using m4a-stems
+      // Check for stem atom using m4a-stems (source of truth for audio tracks)
+      try {
+        const stemData = await M4AAtoms.readNiStemsMetadata(m4aFilePath);
+        if (stemData && stemData.stems) {
+          metadata.stems = stemData.stems.map((stem) => stem.name);
+          metadata.stemCount = stemData.stems.length;
+        }
+      } catch {
+        // No stem atom - not a stem file
+      }
+
+      // Check for kara atom using m4a-stems (lyrics and karaoke data)
       try {
         const karaData = await M4AAtoms.readKaraAtom(m4aFilePath);
 
         if (karaData && karaData.lines && karaData.lines.length > 0) {
           metadata.hasKaraoke = true;
-
-          // Extract stem information if available
-          if (karaData.audio && karaData.audio.sources) {
-            metadata.stems = karaData.audio.sources.map((source) => source.role || source.id);
-            metadata.stemCount = metadata.stems.length;
-          }
 
           // Extract tags if available
           if (karaData.tags && Array.isArray(karaData.tags)) {
