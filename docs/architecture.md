@@ -181,7 +181,7 @@ graph LR
 **Output File Structure:**
 The stemBuilder creates files with dual metadata for maximum compatibility:
 1. **NI Stems metadata** (`stem` atom) - For DJ software (Traktor, Mixxx)
-2. **Karaoke atoms** (`kara`, `vpch`, `kons`) - For lyrics, pitch, word timing
+2. **Karaoke atom** (`kara`) - For lyrics and word timing
 
 ## Shared Services Layer
 
@@ -244,9 +244,7 @@ song.stem.m4a
 │   ├── stem (NI Stems metadata - JSON)
 │   └── meta/ilst/
 │       ├── ©nam, ©ART, etc. (standard metadata)
-│       ├── ----:com.stems:kara (karaoke data - JSON)
-│       ├── ----:com.stems:vpch (vocal pitch - binary)
-│       └── ----:com.stems:kons (word onsets - binary)
+│       └── ----:com.stems:kara (karaoke data with word timing - JSON)
 └── mdat (compressed audio data)
 ```
 
@@ -480,7 +478,6 @@ sequenceDiagram
     Main->>M4ALoader: load(path)
     M4ALoader->>M4ALoader: Read stem atom (track info)
     M4ALoader->>M4ALoader: Read kara atom (lyrics, timing)
-    M4ALoader->>M4ALoader: Read vpch atom (pitch data)
     M4ALoader->>M4ALoader: Extract 5 audio tracks
     M4ALoader-->>Main: Song data + metadata
     Main->>Renderer: IPC: song:data

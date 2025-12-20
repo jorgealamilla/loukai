@@ -7,7 +7,7 @@ Loukai uses an open karaoke format built on top of [Native Instruments' Stems](h
 The Loukai format serves two distinct purposes with a single file:
 
 1. **DJ Software Compatibility** - Files work in Traktor, Mixxx, and other NI Stems-compatible software with full stem control
-2. **Karaoke Functionality** - Additional atoms provide lyrics, pitch tracking, and word timing for karaoke applications
+2. **Karaoke Functionality** - Additional atoms provide lyrics and word timing for karaoke applications
 
 We achieve this by writing **both** the standard NI Stems metadata (for DJ software) and our own karaoke atoms (for Loukai). Software that doesn't understand our karaoke atoms simply ignores them, while software that doesn't understand NI Stems can still use the karaoke data.
 
@@ -20,7 +20,7 @@ The format is a standard MPEG-4 container (`.m4a`) containing:
 - **Five audio tracks** (stems) in AAC format
 - **Standard MP4 metadata** (title, artist, album, key, BPM, etc.)
 - **NI Stems atom** (`stem`) for DJ software compatibility
-- **Karaoke atoms** (`kara`, `vpch`, `kons`) for lyrics and pitch data
+- **Karaoke atom** (`kara`) for lyrics and word timing
 
 ## Why This Format?
 
@@ -30,7 +30,6 @@ The format is a standard MPEG-4 container (`.m4a`) containing:
 | Stem separation | 4 stems + master | Usually not | No |
 | DJ software compatible | Traktor, Mixxx | No | No |
 | Word-level lyrics | Yes | Usually | No |
-| Pitch data | Yes | Rarely | No |
 | Single file | Yes | Usually | MP3+CDG pair |
 | File size | Small (AAC) | Varies | Large |
 
@@ -51,9 +50,7 @@ song.stem.m4a
 │       └── meta      # iTunes-style metadata container
 │           └── ilst  # Metadata items
 │               ├── ©nam, ©ART, etc.  # Standard metadata
-│               ├── ----:com.stems:kara  # Karaoke data (JSON)
-│               ├── ----:com.stems:vpch  # Vocal pitch (binary)
-│               └── ----:com.stems:kons  # Word onsets (binary)
+│               └── ----:com.stems:kara  # Karaoke data (JSON, includes word timing)
 └── mdat              # Media data (compressed audio)
 ```
 
@@ -142,7 +139,7 @@ These are Loukai-specific extensions stored as freeform atoms in the iTunes meta
 
 **Location**: `moov/udta/meta/ilst/----:com.stems:kara`
 
-Contains lyrics, timing, and singer metadata in JSON format. Audio track information is read from the NI Stems `stem` atom (see above).
+Contains lyrics, timing, word-level timing, and singer metadata in JSON format. Audio track information is read from the NI Stems `stem` atom (see above).
 
 ```json
 {
@@ -160,7 +157,10 @@ Contains lyrics, timing, and singer metadata in JSON format. Audio track informa
     {
       "start": 12.5,
       "end": 15.2,
-      "text": "First line of lyrics"
+      "text": "Hello world",
+      "words": {
+        "timings": [[0, 0.4], [0.5, 1.0]]
+      }
     },
     {
       "start": 15.8,
@@ -171,6 +171,24 @@ Contains lyrics, timing, and singer metadata in JSON format. Audio track informa
   ]
 }
 ```
+
+#### Word-Level Timing
+
+Each line can optionally include a `words` object with relative timing for each word:
+
+```json
+"words": {
+  "timings": [[startOffset, endOffset], ...]
+}
+```
+
+- **timings**: Array of `[start, end]` pairs, one per word (split on spaces)
+- **Relative timing**: Offsets are relative to the line's `start` time
+- **Example**: `"Hello world"` at line start 12.5s with `[[0, 0.4], [0.5, 1.0]]` means:
+  - "Hello" plays from 12.5s to 12.9s
+  - "world" plays from 13.0s to 13.5s
+
+This enables syllable-level karaoke highlighting while keeping the data compact and tied to its line context.
 
 #### Why Separate from NI Stems?
 
@@ -222,37 +240,6 @@ The `tags` array provides searchable labels:
 | `edited` | Song was manually edited in the Song Editor |
 | `ai_corrected` | LLM made corrections to lyrics during creation |
 
-### `vpch` - Vocal Pitch
-
-**Location**: `moov/udta/meta/ilst/----:com.stems:vpch`
-
-Contains pitch detection data from CREPE analysis in binary format:
-
-```
-Byte 0:       Version (1)
-Bytes 1-4:    Sample rate (uint32 BE, typically 100 Hz)
-Bytes 5-8:    Data length (uint32 BE)
-Bytes 9+:     Pitch samples (2 bytes each)
-              - Byte 0: MIDI note (0-127, 0 = unvoiced)
-              - Byte 1: Cents deviation (-50 to +50)
-```
-
-**Why binary?** Pitch data can have 10,000+ samples for a 3-minute song. Binary format is ~10x smaller than JSON.
-
-**Why 100 Hz sample rate?** This gives 10ms resolution, which is sufficient for pitch visualization and auto-tune while keeping file size reasonable.
-
-### `kons` - Karaoke Onsets
-
-**Location**: `moov/udta/meta/ilst/----:com.stems:kons`
-
-Contains word onset times for syllable-level highlighting:
-
-```
-Byte 0:       Version (1)
-Bytes 1-4:    Data length (uint32 BE)
-Bytes 5+:     Onset times (4 bytes each, uint32 BE, milliseconds)
-```
-
 ## Standard Metadata
 
 Loukai preserves and uses standard MP4/iTunes metadata:
@@ -279,8 +266,7 @@ Loukai preserves and uses standard MP4/iTunes metadata:
 The Creator runs:
 - **Demucs** for AI stem separation
 - **Whisper** for AI lyric transcription
-- **CREPE** for vocal pitch detection
-- **Key detection** using Krumhansl-Schmuckler algorithm
+- **CREPE** for key detection (Krumhansl-Schmuckler algorithm on pitch data)
 
 ### Programmatic Creation
 
@@ -293,20 +279,18 @@ import { Atoms } from 'm4a-stems';
 // This defines the audio tracks - kara atom does NOT duplicate this info
 await Atoms.addNiStemsMetadata('song.stem.m4a', ['drums', 'bass', 'other', 'vocals']);
 
-// Write karaoke data (lyrics, timing, singers - NO audio section)
+// Write karaoke data (lyrics, timing, word timing, singers)
 await Atoms.writeKaraAtom('song.stem.m4a', {
   timing: { offset_sec: 0 },
-  lines: [{ start: 0, end: 3, text: 'Lyrics here' }]
+  lines: [
+    {
+      start: 0,
+      end: 3,
+      text: 'Hello world',
+      words: { timings: [[0, 0.4], [0.5, 1.0]] }  // Optional word-level timing
+    }
+  ]
 });
-
-// Write pitch data
-await Atoms.writeVpchAtom('song.stem.m4a', {
-  sampleRate: 100,
-  data: [{ midi: 60, cents: 0 }, ...]
-});
-
-// Write word onsets
-await Atoms.writeKonsAtom('song.stem.m4a', [0.5, 1.2, 1.8, ...]);
 ```
 
 ## Reading Files
@@ -318,10 +302,9 @@ import { Atoms } from 'm4a-stems';
 const stems = await Atoms.readNiStemsMetadata('song.stem.m4a');
 // Returns: { version: 1, mastering_dsp: {...}, stems: [{name: 'drums', ...}, ...] }
 
-// Read karaoke data (lyrics, timing, singers)
+// Read karaoke data (lyrics, word timing, singers)
 const kara = await Atoms.readKaraAtom('song.stem.m4a');
-const pitch = await Atoms.readVpchAtom('song.stem.m4a');
-const onsets = await Atoms.readKonsAtom('song.stem.m4a');
+// kara.lines[].words?.timings contains word-level timing if available
 ```
 
 ## Compatibility
@@ -334,7 +317,7 @@ const onsets = await Atoms.readKonsAtom('song.stem.m4a');
 Any player supporting M4A/AAC plays track 0 (the full mix). The stems and custom atoms are ignored, ensuring backward compatibility.
 
 ### Loukai
-Full support for all features: stems, lyrics, pitch display, onset highlighting, multi-singer karaoke.
+Full support for all features: stems, lyrics, word-level highlighting, real-time pitch tracking, multi-singer karaoke.
 
 ## Repairing Old Files
 
@@ -371,4 +354,4 @@ This removes the redundant `audio` section from the kara atom. The audio track i
 - [m4a-stems npm package](https://www.npmjs.com/package/m4a-stems)
 - [Demucs](https://github.com/facebookresearch/demucs) - AI stem separation
 - [Whisper](https://github.com/openai/whisper) - AI speech recognition
-- [CREPE](https://github.com/marl/crepe) - Pitch detection
+- [CREPE](https://github.com/marl/crepe) - Pitch detection (used for key detection)

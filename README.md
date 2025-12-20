@@ -1,17 +1,17 @@
 # Loukai Karaoke
 
-**Free and open source karaoke system for playing and creating stem-based karaoke files**
+**Free and open source karaoke software for playing and creating stem-based karaoke files from your own music**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![React 19](https://img.shields.io/badge/React-19-blue)](https://react.dev/)
 [![Electron 38](https://img.shields.io/badge/Electron-38-blue)](https://www.electronjs.org/)
-[![Test Coverage](https://img.shields.io/badge/coverage-52%25-green)](./docs/PHASE2-SUMMARY.md)
+[![Tests](https://img.shields.io/badge/tests-283-green)](./docs/PHASE2-SUMMARY.md)
 
-Loukai is a free, open source karaoke system that both **plays** and **creates** karaoke files using an open format based on M4A Stems (MPEG-4 multi-track audio). Unlike proprietary karaoke systems, Loukai uses industry-standard formats compatible with DJ software, giving you full control over your karaoke library.
+Loukai is a free, open source karaoke software that runs locally on your computer to **play** and **create** karaoke files from your own music. Built on M4A Stems (MPEG-4 multi-track audio), it uses industry-standard formats compatible with DJ software, giving you full control over your personal karaoke library.
 
 **Key highlights:**
-- **Open Format**: Uses standard M4A Stems — no vendor lock-in, works with Traktor, Serato, and other DJ software
-- **Create Your Own**: Built-in Creator converts any audio file into stem-separated karaoke with AI-transcribed lyrics
+- **Open Format**: Built on NI Stems — no vendor lock-in, works with Traktor, Mixxx, and other DJ software
+- **Create Your Own**: Built-in Creator processes your audio files into stem-separated karaoke with AI-transcribed lyrics
 - **Play Anywhere**: Cross-platform desktop app (Linux, Windows, macOS) with web remote control
 - **Fully Open Source**: AGPL-3.0 licensed — inspect, modify, and contribute
 
@@ -22,10 +22,10 @@ Loukai is a free, open source karaoke system that both **plays** and **creates**
 ## Features
 
 ### Audio & Playback
-- **M4A Stems Format (Primary)**: Industry-standard MPEG-4 multi-track audio with embedded WebVTT lyrics
-  - Compatible with DJ software (Traktor, Serato, etc.)
+- **M4A Stems Format (Primary)**: Built on [NI Stems](https://www.native-instruments.com/en/specials/stems/) with karaoke extensions
+  - Compatible with DJ software (Traktor, Mixxx) via standard NI Stems metadata
   - Smaller file sizes than legacy formats
-  - Superior metadata and lyrics embedding
+  - Embedded lyrics with word-level timing in custom atoms
 - **Real-Time Stem Control**: Individual volume, mute, and solo controls for vocals, drums, bass, and other stems
 - **Legacy Format Support**: CDG/MP3 pairs
 - **Dual Output Routing**: Independent PA and IEM (in-ear monitor) outputs with per-stem routing
@@ -254,16 +254,17 @@ Loukai is built with a multi-process architecture:
 **Industry-standard MPEG-4 multi-track audio** - the modern karaoke format:
 
 #### Why M4A Stems?
-- ✅ **DJ Software Compatible**: Works with Traktor, Serato, djay, and other professional DJ software
+- ✅ **DJ Software Compatible**: Works with Traktor, Mixxx, and other NI Stems-compatible software
 - ✅ **Smaller Files**: 30-50% smaller than ZIP-based formats due to MPEG-4 compression
 - ✅ **Better Metadata**: Native MP4 atoms for rich metadata (title, artist, album art, BPM, key)
-- ✅ **WebVTT Lyrics**: Industry-standard subtitle format with word-level timing
+- ✅ **Karaoke Extensions**: Custom atoms for lyrics with word-level timing
 - ✅ **Single File**: No unpacking required - instant playback
-- ✅ **Widely Supported**: Standard MPEG-4 container readable by many audio tools
+- ✅ **Dual Purpose**: Same file works for both DJing and karaoke
 
 #### Structure
-- **Multi-track audio**: Separate tracks for vocals, drums, bass, other
-- **Custom atoms**: `kara` (lyrics/timing), `vpch` (vocal pitch), `kons` (word onsets)
+- **Multi-track audio**: Master + 4 stems (drums, bass, other, vocals)
+- **NI Stems atom**: `stem` - standard metadata for DJ software compatibility
+- **Karaoke atom**: `kara` (lyrics with word-level timing)
 - **File extension**: `.stem.m4a` or `.m4a`
 
 **Full specification:** [docs/m4a_format.md](./docs/m4a_format.md)
@@ -272,11 +273,11 @@ Loukai is built with a multi-process architecture:
 Use the built-in **Creator** tab in Loukai:
 
 1. Open Loukai and go to the **Creator** tab
-2. Drop any audio file (MP3, FLAC, WAV, etc.) or paste a URL
+2. Drop your audio file (MP3, FLAC, WAV, etc.)
 3. The Creator will:
    - Separate audio into stems using Demucs (AI stem separation)
    - Transcribe lyrics using Whisper (AI speech recognition)
-   - Detect vocal pitch using CREPE
+   - Detect musical key using CREPE
    - Package everything into a `.stem.m4a` file
 
 **Output:** `Artist - Title.stem.m4a` saved to your songs folder
@@ -387,7 +388,7 @@ npm run test:coverage
 npm run test:ui
 ```
 
-**Current Coverage:** 52% (84 tests)
+**Current Coverage:** 283 tests
 
 See [PHASE2-SUMMARY.md](./docs/PHASE2-SUMMARY.md) for detailed testing information.
 

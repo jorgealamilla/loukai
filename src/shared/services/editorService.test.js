@@ -16,8 +16,6 @@ vi.mock('m4a-stems', () => ({
   Atoms: {
     writeKaraAtom: vi.fn(),
     addStandardMetadata: vi.fn(),
-    writeVpchAtom: vi.fn(),
-    writeKonsAtom: vi.fn(),
     addMusicalKey: vi.fn(),
   },
 }));
@@ -128,8 +126,6 @@ describe('editorService', () => {
       M4ALoader.load.mockResolvedValue(mockM4AData);
       Atoms.writeKaraAtom.mockResolvedValue();
       Atoms.addStandardMetadata.mockResolvedValue();
-      Atoms.writeVpchAtom.mockResolvedValue();
-      Atoms.writeKonsAtom.mockResolvedValue();
       Atoms.addMusicalKey.mockResolvedValue();
     });
 

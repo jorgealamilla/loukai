@@ -7,11 +7,12 @@
  * Structure:
  * - ftyp (file type)
  * - moov (movie header with metadata)
+ *   - udta/stem (NI Stems metadata for DJ software)
+ *   - udta/meta/ilst/kara (karaoke data: lyrics, timing, word-level timing)
  * - mdat (media data with stems)
- * - stem (custom atom with stem mapping)
- * - kaid (custom atom with karaoke ID data)
- * - kons (custom atom with onset/lyrics data)
- * - vpch (custom atom with vocal pitch data)
+ *
+ * Note: CREPE pitch detection is used only for key detection during creation.
+ * Vocal pitch tracking for auto-tune/scoring is done at runtime.
  */
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -186,14 +187,32 @@ async function injectKaraokeAtoms(filePath, data) {
   const { lyrics, pitch, metadata, stems, llmCorrections, tags } = data;
 
   // Convert lyrics segments to lines format expected by kara atom
+  // Include word-level timing if available from Whisper
   const lines = [];
   if (lyrics && lyrics.lines && lyrics.lines.length > 0) {
+    const words = lyrics.words || [];
+
     for (const line of lyrics.lines) {
-      lines.push({
+      const lineData = {
         start: line.start,
         end: line.end,
         text: line.text,
-      });
+      };
+
+      // Find words that fall within this line's time range
+      const lineWords = words.filter((w) => w.start >= line.start && w.start < line.end);
+
+      if (lineWords.length > 0) {
+        // Compute relative timings: [startOffset, endOffset] from line.start
+        // Round to 3 decimal places for reasonable precision
+        const timings = lineWords.map((w) => [
+          Math.round((w.start - line.start) * 1000) / 1000,
+          Math.round(((w.end || w.start + 0.1) - line.start) * 1000) / 1000,
+        ]);
+        lineData.words = { timings };
+      }
+
+      lines.push(lineData);
     }
   }
 
@@ -250,43 +269,8 @@ async function injectKaraokeAtoms(filePath, data) {
   console.log(`💾 Writing kara atom: ${lines.length} lines`);
   await M4AAtoms.writeKaraAtom(filePath, karaData);
 
-  // Write vocal pitch atom if we have pitch data
-  if (pitch && pitch.pitch_data) {
-    // Convert CREPE format to m4a-stems format
-    const crepeData = pitch.pitch_data;
-    const pitchSampleRate = crepeData.sample_rate / crepeData.hop_length; // samples per second of pitch data
-
-    const vpchData = {
-      sampleRate: Math.round(pitchSampleRate),
-      data: crepeData.midi.map((midiFloat) => {
-        if (midiFloat === 0) {
-          return { midi: 0, cents: 0 }; // Unvoiced
-        }
-        const midiInt = Math.floor(midiFloat);
-        const cents = Math.round((midiFloat - midiInt) * 100);
-        return { midi: midiInt, cents };
-      }),
-    };
-
-    console.log(
-      `🎵 Writing vocal pitch atom: ${vpchData.data.length} frames at ${vpchData.sampleRate}Hz`
-    );
-    await M4AAtoms.writeVpchAtom(filePath, vpchData);
-  }
-
-  // Write onsets atom if we have word timestamps
-  if (lyrics && lyrics.words && lyrics.words.length > 0) {
-    // Convert words to onset format (just start times)
-    const onsets = lyrics.words
-      .map((w) => w.start)
-      .filter((t) => t > 0)
-      .sort((a, b) => a - b);
-
-    if (onsets.length > 0) {
-      console.log(`🎯 Writing onsets atom: ${onsets.length} onsets`);
-      await M4AAtoms.writeKonsAtom(filePath, onsets);
-    }
-  }
+  // Note: Vocal pitch tracking is done at runtime, not stored in file.
+  // CREPE output is used only for key detection (stored in standard metadata).
 
   console.log('✅ Karaoke atoms written successfully');
 }
@@ -298,13 +282,12 @@ async function injectKaraokeAtoms(filePath, data) {
  * @param {Object} options - Injection options
  * @param {string} options.filePath - Path to existing .stem.m4a file
  * @param {Object} options.lyrics - Whisper transcription result with word timestamps
- * @param {Object} options.pitch - CREPE pitch detection result
  * @param {Object} options.llmCorrections - LLM correction stats
  * @param {string[]} options.tags - Tags array for filtering
  * @returns {Promise<void>}
  */
 export async function injectLyricsIntoStemFile(options) {
-  const { filePath, lyrics, pitch, llmCorrections, tags } = options;
+  const { filePath, lyrics, llmCorrections, tags } = options;
 
   console.log(`🎤 Injecting lyrics into existing stem file: ${filePath}`);
 
@@ -316,15 +299,31 @@ export async function injectLyricsIntoStemFile(options) {
     // No existing kara atom - that's fine
   }
 
-  // Build kara data structure
+  // Build kara data structure with word-level timing if available
   const lines = [];
   if (lyrics && lyrics.lines && lyrics.lines.length > 0) {
+    const words = lyrics.words || [];
+
     for (const line of lyrics.lines) {
-      lines.push({
+      const lineData = {
         start: line.start,
         end: line.end,
         text: line.text,
-      });
+      };
+
+      // Find words that fall within this line's time range
+      const lineWords = words.filter((w) => w.start >= line.start && w.start < line.end);
+
+      if (lineWords.length > 0) {
+        // Compute relative timings: [startOffset, endOffset] from line.start
+        const timings = lineWords.map((w) => [
+          Math.round((w.start - line.start) * 1000) / 1000,
+          Math.round(((w.end || w.start + 0.1) - line.start) * 1000) / 1000,
+        ]);
+        lineData.words = { timings };
+      }
+
+      lines.push(lineData);
     }
   }
 
@@ -370,42 +369,6 @@ export async function injectLyricsIntoStemFile(options) {
   // Write kara atom
   console.log(`💾 Writing kara atom: ${lines.length} lines`);
   await M4AAtoms.writeKaraAtom(filePath, karaData);
-
-  // Write vocal pitch atom if we have pitch data
-  if (pitch && pitch.pitch_data) {
-    const crepeData = pitch.pitch_data;
-    const pitchSampleRate = crepeData.sample_rate / crepeData.hop_length;
-
-    const vpchData = {
-      sampleRate: Math.round(pitchSampleRate),
-      data: crepeData.midi.map((midiFloat) => {
-        if (midiFloat === 0) {
-          return { midi: 0, cents: 0 };
-        }
-        const midiInt = Math.floor(midiFloat);
-        const cents = Math.round((midiFloat - midiInt) * 100);
-        return { midi: midiInt, cents };
-      }),
-    };
-
-    console.log(
-      `🎵 Writing vocal pitch atom: ${vpchData.data.length} frames at ${vpchData.sampleRate}Hz`
-    );
-    await M4AAtoms.writeVpchAtom(filePath, vpchData);
-  }
-
-  // Write onsets atom if we have word timestamps
-  if (lyrics && lyrics.words && lyrics.words.length > 0) {
-    const onsets = lyrics.words
-      .map((w) => w.start)
-      .filter((t) => t > 0)
-      .sort((a, b) => a - b);
-
-    if (onsets.length > 0) {
-      console.log(`🎯 Writing onsets atom: ${onsets.length} onsets`);
-      await M4AAtoms.writeKonsAtom(filePath, onsets);
-    }
-  }
 
   console.log('✅ Lyrics injected successfully');
 }

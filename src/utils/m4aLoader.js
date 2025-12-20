@@ -292,10 +292,9 @@ class M4ALoader {
 
         features: {
           notesRef: null,
-          vocalPitch: karaData.vocal_pitch || null,
-          vocalsF0: null,
-          onsets: karaData.onsets || null,
           tempo: karaData.meter || null,
+          // Word-level timing is embedded in each lyric line's `words.timings` property
+          // Vocal pitch detection is done at runtime, not stored in file
         },
 
         coaching: {
