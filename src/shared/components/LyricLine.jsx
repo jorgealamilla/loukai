@@ -5,11 +5,22 @@
  * - Editable timing (start/end)
  * - Editable text
  * - Enable/disable toggle
- * - Backup singer checkbox
+ * - Singer assignment dropdown
  * - Delete button
  * - Add line after button
  * - Click line number to play that section
  */
+
+import { PortalSelect } from './PortalSelect.jsx';
+
+// Singer options for the dropdown
+const SINGER_OPTIONS = [
+  { value: '', label: 'Lead' },
+  { value: 'B', label: 'Singer B' },
+  { value: 'duet', label: 'Duet' },
+  { value: 'backup', label: 'Backup' },
+  { value: 'backup:PA', label: 'Backup PA 🔊' },
+];
 
 export function LyricLine({
   line,
@@ -29,7 +40,9 @@ export function LyricLine({
   const endTime = line.end || line.endTimeSec || startTime + 3;
   const text = line.text || '';
   const disabled = line.disabled === true;
-  const backup = line.backup === true;
+  // Support new singer field, with backward compatibility for legacy backup boolean
+  const singer = line.singer || (line.backup === true ? 'backup' : '');
+  const isBackup = singer?.startsWith('backup') || false;
 
   const handleStartTimeChange = (e) => {
     const value = parseFloat(e.target.value) || 0;
@@ -45,8 +58,12 @@ export function LyricLine({
     onUpdate(index, { ...line, text: e.target.value });
   };
 
-  const handleBackupChange = (e) => {
-    onUpdate(index, { ...line, backup: e.target.checked });
+  const handleSingerChange = (e) => {
+    const newSinger = e.target.value || undefined;
+    // Remove legacy backup field when using new singer field
+    const { backup: _backup, ...lineWithoutBackup } = line;
+    onSelect(index); // Select this line to ensure immediate visual update
+    onUpdate(index, { ...lineWithoutBackup, singer: newSinger });
   };
 
   const handleToggleDisabled = () => {
@@ -63,12 +80,15 @@ export function LyricLine({
   let containerClasses =
     'lyric-line-editor flex items-center gap-2.5 mb-2.5 p-2 border-2 rounded transition-all cursor-pointer';
 
-  // Conditional states (most specific first)
-  if (isSelected) {
+  // Conditional states - backup background takes priority, selection adds border
+  if (isBackup) {
+    // Backup lines always show yellow background
+    containerClasses += ' bg-yellow-50 dark:bg-yellow-900/20';
+    containerClasses += isSelected
+      ? ' border-blue-500 dark:border-blue-400'
+      : ' border-yellow-400 dark:border-yellow-600';
+  } else if (isSelected) {
     containerClasses += ' border-blue-500 bg-blue-100 dark:border-blue-400 dark:bg-blue-900/40';
-  } else if (backup) {
-    containerClasses +=
-      ' bg-yellow-50 dark:bg-yellow-900/20 border-yellow-400 dark:border-yellow-600';
   } else if (disabled) {
     containerClasses +=
       ' opacity-50 bg-gray-100 dark:bg-gray-900 border-gray-300 dark:border-gray-600';
@@ -105,7 +125,10 @@ export function LyricLine({
           onChange={handleStartTimeChange}
           step="0.1"
           min="0"
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(index);
+          }}
           title={
             hasOverlap
               ? 'Warning: This line overlaps with the previous line for the same singer'
@@ -120,7 +143,10 @@ export function LyricLine({
           onChange={handleEndTimeChange}
           step="0.1"
           min="0"
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(index);
+          }}
         />
       </div>
 
@@ -137,24 +163,19 @@ export function LyricLine({
         disabled={disabled}
       />
 
-      <div className="flex items-center gap-3 flex-shrink-0">
-        <label
-          className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600 dark:text-gray-400 select-none"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <input
-            type="checkbox"
-            className="hidden"
-            checked={backup}
-            onChange={handleBackupChange}
-          />
-          <span
-            className={`w-4 h-4 border-2 rounded transition-all ${backup ? 'bg-blue-600 border-blue-600 dark:bg-blue-500 dark:border-blue-500' : 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600'} flex items-center justify-center`}
-          >
-            {backup && <span className="text-white text-xs font-semibold leading-none">✓</span>}
-          </span>
-          Backup
-        </label>
+      <div
+        className="flex items-center gap-1 flex-shrink-0 w-28"
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(index);
+        }}
+      >
+        <PortalSelect
+          value={singer}
+          onChange={handleSingerChange}
+          options={SINGER_OPTIONS}
+          className="text-xs py-1 px-2"
+        />
       </div>
 
       <div className="flex items-center gap-1.5 flex-shrink-0">
