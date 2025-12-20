@@ -403,13 +403,10 @@ export class KAIPlayer extends PlayerInterface {
 
     await this.loadAudioBuffers(songData);
 
-    // Load vocals_f0 data for auto-tune (if available)
+    // Clear any previous pitch reference data
+    // Note: Pitch detection is now done in real-time from the vocal stem
     if (this.micEngine) {
-      if (songData.features) {
-        this.micEngine.loadVocalsF0(songData.features);
-      } else {
-        this.micEngine.clearPitchReference();
-      }
+      this.micEngine.clearPitchReference();
     }
 
     // Report song loaded to main process
@@ -712,6 +709,13 @@ export class KAIPlayer extends PlayerInterface {
               const paSource = this.audioContexts.PA.createBufferSource();
               paSource.buffer = audioBuffer; // Reuse the same decoded buffer
               paSource.connect(this.outputNodes.PA.vocalsPAGain);
+
+              // Connect vocals to pitch detection for auto-tune reference
+              // This enables real-time pitch tracking from the vocal stem
+              if (this.micEngine) {
+                this.micEngine.connectMusicSource(paSource);
+              }
+
               paSource.start(scheduleTime, offset);
               this.outputNodes.PA.sourceNodes.set(stem.name + '_vocalsPA', paSource);
             }

@@ -147,24 +147,15 @@ async function saveM4ASong(path, updates) {
     // Tags for filtering (e.g., 'edited', 'ai_corrected')
     tags: dataToSave.tags || [],
 
-    // Lyrics (lines)
+    // Lyrics (lines) - preserves word-level timing if present
     lines: (dataToSave.lyrics || []).map((line) => ({
       start: line.start || line.startTimeSec || 0,
       end: line.end || line.endTimeSec || 0,
       text: line.text || '',
       ...(line.disabled && { disabled: true }),
       ...(line.singer && { singer: line.singer }),
+      ...(line.words && { words: line.words }),
     })),
-
-    // Optional: vocal pitch data
-    ...(dataToSave.features?.vocalPitch && {
-      vocal_pitch: dataToSave.features.vocalPitch,
-    }),
-
-    // Optional: onsets data
-    ...(dataToSave.features?.onsets && {
-      onsets: dataToSave.features.onsets,
-    }),
 
     // Optional: tempo/meter data
     ...(dataToSave.features?.tempo && {
@@ -202,18 +193,6 @@ async function saveM4ASong(path, updates) {
     tempo: updatedMetadata.tempo,
   };
   await Atoms.addStandardMetadata(path, standardMetadata);
-
-  // Write vocal pitch atom if we have pitch data
-  if (dataToSave.features?.vocalPitch) {
-    console.log('🎵 Writing vocal pitch atom...');
-    await Atoms.writeVpchAtom(path, dataToSave.features.vocalPitch);
-  }
-
-  // Write onsets atom if we have onset data
-  if (dataToSave.features?.onsets && Array.isArray(dataToSave.features.onsets)) {
-    console.log('🎯 Writing onsets atom...');
-    await Atoms.writeKonsAtom(path, dataToSave.features.onsets);
-  }
 
   // Write musical key if changed (separate atom for DJ software)
   if (metadata.key !== undefined && updatedMetadata.key) {
