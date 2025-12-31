@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, globalShortcut } from 'electron';
 import path, { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -197,11 +197,9 @@ class KaiPlayerApp {
       : path.join(process.cwd(), 'static', 'images', 'logo.png');
 
     const windowOptions = {
-      width: 1200,
-      height: 800,
-      minWidth: 800,
-      minHeight: 600,
-      autoHideMenuBar: true, // Hide menu bar for cleaner, modern UI
+      fullscreen: true, // Start in fullscreen mode
+      autoHideMenuBar: true,
+      frame: true, // Keep frame for now, but fullscreen will hide it
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
@@ -219,11 +217,31 @@ class KaiPlayerApp {
 
     this.mainWindow = new BrowserWindow(windowOptions);
 
+    // Prevent ESC from exiting fullscreen - intercept it before it reaches the window
+    this.mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'Escape' && input.type === 'keyDown') {
+        // Prevent ESC from exiting fullscreen
+        event.preventDefault();
+      }
+    });
+
+    // Register admin key combination to toggle fullscreen: Ctrl+Shift+Alt+F
+    // App is already ready at this point, so register directly
+    globalShortcut.register('CommandOrControl+Shift+Alt+F', () => {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        const isFullscreen = this.mainWindow.isFullScreen();
+        this.mainWindow.setFullScreen(!isFullscreen);
+        console.log(`🔑 Admin: Fullscreen ${!isFullscreen ? 'enabled' : 'disabled'}`);
+      }
+    });
+
     const rendererPath = path.join(__dirname, '../renderer/index.html');
     this.mainWindow.loadFile(rendererPath);
 
-    // Open DevTools to debug renderer issues
-    this.mainWindow.webContents.openDevTools();
+    // Auto-focus window when ready so keyboard works immediately
+    this.mainWindow.webContents.on('did-finish-load', () => {
+      this.mainWindow.focus();
+    });
 
     // Log all console messages from renderer
     this.mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {

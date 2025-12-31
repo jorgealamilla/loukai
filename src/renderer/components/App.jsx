@@ -19,6 +19,8 @@ import { ServerTab } from './ServerTab.jsx';
 import { VisualizationSettings } from '../../shared/components/VisualizationSettings.jsx';
 import { toggleCanvasFullscreen } from '../hooks/useKeyboardShortcuts.js';
 import { CreateTab } from './creator/CreateTab.jsx';
+import YouTubeSearchTab from './YouTubeSearchTab.jsx';
+import { KeyboardNavigationManager } from './KeyboardNavigationManager.jsx';
 
 export function App({ bridge }) {
   const [requests, setRequests] = useState([]);
@@ -211,10 +213,10 @@ export function App({ bridge }) {
 
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
+        {/* Sidebar - Hidden for YouTube-only mode */}
         <div
           id="app-sidebar"
-          className="w-80 bg-white dark:bg-gray-800 p-4 overflow-y-auto border-r border-gray-200 dark:border-gray-700 transition-all duration-300"
+          className="hidden w-80 bg-white dark:bg-gray-800 p-4 overflow-y-auto border-r border-gray-200 dark:border-gray-700 transition-all duration-300"
         >
           <VisualizationSettings bridge={bridge} />
         </div>
@@ -231,13 +233,18 @@ export function App({ bridge }) {
               <LibraryPanel bridge={bridge} showSetFolder={true} showFullRefresh={true} />
             </div>
 
+            {/* YouTube Tab - Default visible */}
+            <div id="youtube-tab" className="block h-full overflow-auto">
+              <YouTubeSearchTab />
+            </div>
+
             {/* Mixer Tab */}
             <div id="mixer-tab" className="hidden h-full overflow-auto">
               <MixerTab bridge={bridge} />
             </div>
 
             {/* Player Tab */}
-            <div id="player-tab" className="h-full flex flex-col">
+            <div id="player-tab" className="hidden h-full flex flex-col">
               {/* Top Section: Queue Sidebar + Canvas */}
               <div className="flex flex-1 gap-1 min-h-0">
                 {/* Queue Sidebar (Left 30%) */}
@@ -298,6 +305,9 @@ export function App({ bridge }) {
 
       {/* Status Bar */}
       <StatusBar bridge={bridge} />
+
+      {/* Keyboard Navigation Manager */}
+      <KeyboardNavigationManager />
     </div>
   );
 }

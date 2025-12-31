@@ -37,6 +37,8 @@ import { registerAutotuneHandlers } from './autotuneHandlers.js';
 console.log('✓ autotuneHandlers');
 import { registerCreatorHandlers } from './creatorHandlers.js';
 console.log('✓ creatorHandlers');
+import { registerYouTubeSearchHandlers } from './youtubeSearchHandlers.js';
+console.log('✓ youtubeSearchHandlers');
 
 /**
  * Register all IPC handlers
@@ -69,6 +71,9 @@ export function registerAllHandlers(mainApp) {
 
     // Creator handlers
     registerCreatorHandlers(mainApp);
+
+    // YouTube search handlers
+    registerYouTubeSearchHandlers();
 
     console.log('✅ All IPC handlers registered');
   } catch (error) {

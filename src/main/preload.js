@@ -233,6 +233,12 @@ const api = {
     removeConversionErrorListener: (callback) =>
       ipcRenderer.removeListener('creator:conversionError', callback),
   },
+
+  youtube: {
+    search: (query) => ipcRenderer.invoke('youtube:search', query),
+    openVideo: (videoUrl) => ipcRenderer.invoke('youtube:openVideo', videoUrl),
+    closeWindow: () => ipcRenderer.invoke('youtube:closeWindow'),
+  },
 };
 
 // Since contextIsolation is disabled, directly assign to window
